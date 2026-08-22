@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KeremThe.Dev — YouTube Downloader</title>
+  <meta name="description" content="YouTube videolarını ve müziklerini yüksek kalitede cihazınıza indirin.">
+  <!-- Google Fonts: Inter & Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Remix Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Ambient background glow -->
+  <div class="ambient-glow glow-top"></div>
+  <div class="ambient-glow glow-bottom"></div>
+
+  <div class="app-shell">
+    <!-- Navbar / Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="brand-logo">
+          <i class="ri-play-fill"></i>
+        </div>
+        <span class="brand-name">KeremThe.Dev</span>
+        <span class="badge-pro">PRO</span>
+      </div>
+      <div class="nav-tagline">
+        <span class="badge-ai"><i class="ri-sparkles-fill"></i> Made by AI</span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-container">
+      
+      <!-- Hero Header Text -->
+      <section class="hero-section">
+        <h1 class="hero-title">YouTube videolarını doğrudan <span>cihazına indir.</span></h1>
+        <p class="hero-subtitle">MP4 video veya 320kbps MP3 ses formatını seçin, saniyeler içinde cihazınızın İndirilenler klasörüne kaydedin.</p>
+      </section>
+
+      <!-- Input Card -->
+      <section class="apple-card input-card">
+        <div class="input-group">
+          <div class="input-icon">
+            <i class="ri-link-m"></i>
+          </div>
+          <input 
+            type="text" 
+            id="ytUrlInput" 
+            placeholder="YouTube video veya müzik bağlantısını yapıştırın..." 
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="pasteBtn" class="pill-btn secondary" title="Panodan Yapıştır">
+            <i class="ri-clipboard-line"></i>
+            <span>Yapıştır</span>
+          </button>
+          <button id="fetchBtn" class="pill-btn primary">
+            <span id="fetchBtnText">Hazırla</span>
+            <i class="ri-arrow-right-s-line"></i>
+          </button>
+        </div>
+
+        <!-- Error Alert -->
+        <div id="errorToast" class="alert alert-error hidden">
+          <i class="ri-error-warning-line"></i>
+          <span id="errorMessage"></span>
+        </div>
+
+        <!-- Video Preview & Format Selection -->
+        <div id="videoInfoCard" class="video-preview-card hidden">
+          <div class="media-preview-container">
+            <img id="videoThumb" src="" alt="Thumbnail">
+            <span id="videoDuration" class="time-tag">00:00</span>
+          </div>
+
+          <div class="media-details">
+            <div>
+              <h2 id="videoTitle" class="media-title">Video Başlığı Yükleniyor...</h2>
+              <p id="videoChannel" class="media-channel">
+                <i class="ri-user-3-line"></i> <span>Kanal İsmi</span>
+              </p>
+            </div>
+
+            <div class="format-controls">
+              <div class="segmented-control">
+                <button class="segment-btn active" data-type="video">
+                  <i class="ri-movie-line"></i>
+                  <span>Video (MP4)</span>
+                </button>
+                <button class="segment-btn" data-type="mp3">
+                  <i class="ri-music-2-line"></i>
+                  <span>Ses (MP3)</span>
+                </button>
+              </div>
+
+              <div id="qualitySelectorGroup" class="select-wrapper">
+                <i class="ri-equalizer-line select-icon"></i>
+                <select id="qualitySelect">
+                  <option value="best">En Yüksek Kalite (Otomatik)</option>
+                  <option value="2160p">4K Ultra HD (2160p)</option>
+                  <option value="1080p" selected>Full HD (1080p)</option>
+                  <option value="720p">HD (720p)</option>
+                  <option value="480p">480p</option>
+                </select>
+              </div>
+
+              <div id="mp3InfoGroup" class="mp3-badge hidden">
+                <i class="ri-sparkles-line"></i> 320 kbps Ultra HQ MP3 Sesi
+              </div>
+            </div>
+
+            <button id="startDownloadBtn" class="download-action-btn">
+              <i class="ri-download-cloud-2-line"></i>
+              <span>İndirmeyi Başlat</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Active Downloads Section -->
+      <section class="apple-card downloads-card">
+        <div class="card-header">
+          <h2 class="card-title">
+            <i class="ri-download-2-line"></i> Aktif İndirmeler
+          </h2>
+          <span id="activeCountBadge" class="status-counter">0 İşlem</span>
+        </div>
+
+        <div id="activeList" class="downloads-list">
+          <div class="empty-state" id="emptyActiveState">
+            <div class="empty-icon"><i class="ri-download-cloud-line"></i></div>
+            <p class="empty-title">Aktif indirme yok</p>
+            <p class="empty-sub">Bir YouTube bağlantısı girerek cihazınıza indirmeye başlayabilirsiniz.</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Apple-style Minimal Footer -->
+    <footer class="app-footer">
+      <p>© <strong>KeremThe.Dev</strong> • Tüm indirmeler doğrudan kendi cihazınızın tarayıcısına kaydedilir.</p>
+      <div class="ai-footer-tag"><i class="ri-sparkles-line"></i> Powered & Crafted with AI</div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
