@@ -1,56 +1,81 @@
 document.addEventListener('DOMContentLoaded', () => {
-  // UI Elements
-  const ytUrlInput = document.getElementById('ytUrlInput');
-  const fetchBtn = document.getElementById('fetchBtn');
-  const fetchBtnText = document.getElementById('fetchBtnText');
-  const pasteBtn = document.getElementById('pasteBtn');
-  const errorToast = document.getElementById('errorToast');
-  const errorMessage = document.getElementById('errorMessage');
-  
-  const videoInfoCard = document.getElementById('videoInfoCard');
-  const videoThumb = document.getElementById('videoThumb');
-  const videoDuration = document.getElementById('videoDuration');
-  const videoTitle = document.getElementById('videoTitle');
-  const videoChannel = document.getElementById('videoChannel');
-  const qualitySelect = document.getElementById('qualitySelect');
+  // ── UI Elements ──────────────────────────────────────────────────────────
+  const ytUrlInput         = document.getElementById('ytUrlInput');
+  const fetchBtn           = document.getElementById('fetchBtn');
+  const fetchBtnText       = document.getElementById('fetchBtnText');
+  const pasteBtn           = document.getElementById('pasteBtn');
+  const errorToast         = document.getElementById('errorToast');
+  const errorMessage       = document.getElementById('errorMessage');
+  const videoInfoCard      = document.getElementById('videoInfoCard');
+  const videoThumb         = document.getElementById('videoThumb');
+  const videoDuration      = document.getElementById('videoDuration');
+  const videoTitle         = document.getElementById('videoTitle');
+  const videoChannel       = document.getElementById('videoChannel');
+  const qualitySelect      = document.getElementById('qualitySelect');
   const qualitySelectorGroup = document.getElementById('qualitySelectorGroup');
-  const mp3InfoGroup = document.getElementById('mp3InfoGroup');
-  const startDownloadBtn = document.getElementById('startDownloadBtn');
-  
-  const activeList = document.getElementById('activeList');
-  const emptyActiveState = document.getElementById('emptyActiveState');
-  const activeCountBadge = document.getElementById('activeCountBadge');
+  const mp3InfoGroup       = document.getElementById('mp3InfoGroup');
+  const startDownloadBtn   = document.getElementById('startDownloadBtn');
+  const activeList         = document.getElementById('activeList');
+  const emptyActiveState   = document.getElementById('emptyActiveState');
+  const activeCountBadge   = document.getElementById('activeCountBadge');
 
   let currentVideoInfo = null;
-  let selectedFormat = 'video'; // 'video' or 'mp3'
-  const activeDownloadsMap = new Map(); // downloadId -> element map
+  let selectedFormat   = 'video';
 
-  // Setup WebSocket connection
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}`;
-  let ws = new WebSocket(wsUrl);
+  // downloadId -> { card, pollTimer }
+  const downloadsMap = new Map();
 
-  ws.onopen = () => {
-    console.log('WebSocket connection established');
-  };
+  // ── WebSocket ─────────────────────────────────────────────────────────────
+  let ws = null;
 
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      handleWsEvent(data);
-    } catch (e) {
-      console.error('Error parsing WS message', e);
+  function connectWs() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+    ws.onopen = () => console.log('[WS] Connected');
+
+    ws.onmessage = (event) => {
+      try {
+        handleServerEvent(JSON.parse(event.data));
+      } catch (e) {
+        console.error('[WS] Parse error:', e);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('[WS] Closed — reconnecting in 3s');
+      setTimeout(connectWs, 3000);
+    };
+
+    ws.onerror = (e) => {
+      console.error('[WS] Error:', e);
+    };
+  }
+
+  connectWs();
+
+  // ── Central event handler (WS + polling share this) ──────────────────────
+  function handleServerEvent(data) {
+    switch (data.event) {
+      case 'progress':
+        updateProgress(data);
+        break;
+      case 'status_update':
+        updateStatusBadge(data.downloadId, data.message);
+        break;
+      case 'complete':
+        onComplete(data);
+        break;
+      case 'error':
+        onError(data);
+        break;
+      case 'cancelled':
+        removeCard(data.downloadId);
+        break;
     }
-  };
+  }
 
-  ws.onclose = () => {
-    console.log('WebSocket closed, attempting reconnect in 3s...');
-    setTimeout(() => {
-      ws = new WebSocket(wsUrl);
-    }, 3000);
-  };
-
-  // 1. Handle Paste Button
+  // ── Paste Button ──────────────────────────────────────────────────────────
   pasteBtn.addEventListener('click', async () => {
     try {
       const text = await navigator.clipboard.readText();
@@ -58,54 +83,40 @@ document.addEventListener('DOMContentLoaded', () => {
         ytUrlInput.value = text.trim();
         fetchVideoInfo();
       }
-    } catch (err) {
-      showError('Panodan okuma izni verilemedi. Lütfen bağlantıyı elle yapıştırın.');
+    } catch {
+      showError('Panoya erişim izni verilmedi. Lütfen bağlantıyı elle yapıştırın.');
     }
   });
 
-  // 2. Fetch Video Info on Button Click or Enter
+  // ── Fetch Button / Enter ──────────────────────────────────────────────────
   fetchBtn.addEventListener('click', fetchVideoInfo);
-  ytUrlInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') fetchVideoInfo();
-  });
+  ytUrlInput.addEventListener('keypress', e => { if (e.key === 'Enter') fetchVideoInfo(); });
 
-  // Auto-fetch on input change if full YouTube URL is pasted
   ytUrlInput.addEventListener('input', () => {
-    const val = ytUrlInput.value.trim();
-    if (val.includes('youtube.com/watch') || val.includes('youtu.be/')) {
+    const v = ytUrlInput.value.trim();
+    if (v.includes('youtube.com/watch') || v.includes('youtu.be/')) {
       fetchVideoInfo();
     }
   });
 
   function isValidYoutubeUrl(url) {
-    if (!url || typeof url !== 'string') return false;
-    const trimmed = url.trim().toLowerCase();
-    return trimmed.includes('youtube.com') || trimmed.includes('youtu.be');
+    if (!url) return false;
+    const lower = url.trim().toLowerCase();
+    return lower.includes('youtube.com') || lower.includes('youtu.be');
   }
 
   async function fetchVideoInfo() {
     const url = ytUrlInput.value.trim();
-    if (!url) {
-      showError('Lütfen bir YouTube bağlantısı girin.');
-      return;
-    }
-
-    if (!isValidYoutubeUrl(url)) {
-      showError('Geçersiz bağlantı! Lütfen geçerli bir YouTube video veya müzik adresi girin.');
-      return;
-    }
+    if (!url) { showError('Lütfen bir YouTube bağlantısı girin.'); return; }
+    if (!isValidYoutubeUrl(url)) { showError('Geçersiz bağlantı! Lütfen geçerli bir YouTube adresi girin.'); return; }
 
     hideError();
     setFetchLoading(true);
 
     try {
-      const response = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Video bilgileri alınamadı. Geçersiz veya gizli YouTube bağlantısı olabilir.');
-      }
-
+      const resp = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Video bilgileri alınamadı.');
       currentVideoInfo = data;
       renderVideoInfo(data);
     } catch (err) {
@@ -122,37 +133,37 @@ document.addEventListener('DOMContentLoaded', () => {
     videoTitle.textContent = info.title;
     videoChannel.querySelector('span').textContent = info.uploader;
 
-    // Populate available resolutions
     qualitySelect.innerHTML = '';
-    
-    // Add "En Yüksek Kalite"
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = 'best';
-    defaultOpt.textContent = 'En Yüksek Kalite (Otomatik)';
-    qualitySelect.appendChild(defaultOpt);
+    const bestOpt = document.createElement('option');
+    bestOpt.value = 'best';
+    bestOpt.textContent = 'En Yüksek Kalite (Otomatik)';
+    qualitySelect.appendChild(bestOpt);
 
     if (info.availableResolutions && info.availableResolutions.length > 0) {
       info.availableResolutions.forEach(res => {
         const opt = document.createElement('option');
         opt.value = res;
-        opt.textContent = `${res} High-Def`;
+        const label = res === '2160p' ? '4K Ultra HD (2160p)'
+                    : res === '1440p' ? 'Quad HD (1440p)'
+                    : res === '1080p' ? 'Full HD (1080p)'
+                    : res === '720p'  ? 'HD (720p)'
+                    : res;
+        opt.textContent = label;
         if (res === '1080p') opt.selected = true;
         qualitySelect.appendChild(opt);
       });
     }
 
     videoInfoCard.classList.remove('hidden');
+    videoInfoCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
-  // 3. Toggle Format (Video vs MP3)
+  // ── Format Toggle ─────────────────────────────────────────────────────────
   document.querySelectorAll('.segment-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', e => {
       document.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
-      const target = e.currentTarget;
-      target.classList.add('active');
-
-      selectedFormat = target.dataset.type;
-
+      e.currentTarget.classList.add('active');
+      selectedFormat = e.currentTarget.dataset.type;
       if (selectedFormat === 'mp3') {
         qualitySelectorGroup.classList.add('hidden');
         mp3InfoGroup.classList.remove('hidden');
@@ -163,152 +174,62 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // 4. Start Download Request (two‑step preparation)
-  startDownloadBtn.addEventListener('click', () => {
+  // ── Start Download ────────────────────────────────────────────────────────
+  startDownloadBtn.addEventListener('click', async () => {
     const url = ytUrlInput.value.trim();
     if (!url) return;
 
-    const quality = qualitySelect.value;
-    const title = currentVideoInfo ? currentVideoInfo.title : 'YouTube_Medya';
-    const format = selectedFormat; // "mp3" or "mp4"
-
-    // Disable UI while request is sent
     startDownloadBtn.disabled = true;
     startDownloadBtn.style.opacity = '0.6';
 
-    fetch('/api/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, formatType: format, quality })
-    })
-      .then(r => r.json().then(data => ({ ok: r.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) {
-          showError(data.error || 'İndirme başlatılamadı.');
-          return;
-        }
-        const downloadId = data.downloadId;
-        // Automatic download removed; user must click the manual download linkId;
-        // Create a card that shows "Hazırlanıyor..." and a progress bar
-        const card = createPreparingCard(downloadId, title, format);
-        // Start polling for status
-        const poll = setInterval(() => {
-          fetch(`/api/status/${downloadId}`)
-            .then(r => r.json())
-            .then(status => {
-              if (status.event === 'progress') {
-                updateCardProgress(card, status);
-              } else if (status.event === 'complete') {
-                clearInterval(poll);
-                transformToDownloadCard(card, status);
-              } else if (status.event === 'error') {
-                clearInterval(poll);
-                showError(status.error || 'İndirme hatası.');
-                card.remove();
-              }
-            })
-            .catch(err => {
-              clearInterval(poll);
-              console.error(err);
-            });
-        }, 2000);
-      })
-      .catch(err => {
-        console.error(err);
-        showError('Sunucu bağlantı hatası.');
-      })
-      .finally(() => {
-        startDownloadBtn.disabled = false;
-        startDownloadBtn.style.opacity = '1';
-        ytUrlInput.value = '';
-        videoInfoCard.classList.add('hidden');
+    try {
+      const resp = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, formatType: selectedFormat, quality: qualitySelect.value })
       });
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        showError(data.error || 'İndirme başlatılamadı.');
+        return;
+      }
+
+      const { downloadId } = data;
+      const title = currentVideoInfo ? currentVideoInfo.title : 'YouTube Medya';
+
+      // Create the single download card
+      createCard(downloadId, title, selectedFormat);
+
+      // Start HTTP polling as backup (WS is primary)
+      startPolling(downloadId);
+
+      // Reset UI
+      ytUrlInput.value = '';
+      videoInfoCard.classList.add('hidden');
+      currentVideoInfo = null;
+    } catch (err) {
+      console.error(err);
+      showError('Sunucu bağlantı hatası. Lütfen tekrar deneyin.');
+    } finally {
+      startDownloadBtn.disabled = false;
+      startDownloadBtn.style.opacity = '1';
+    }
   });
 
-  /** Create a card that indicates the video is being prepared */
-  function createPreparingCard(downloadId, title, format) {
-    emptyActiveState.classList.add('hidden');
-    const card = document.createElement('div');
-    card.className = 'download-item';
-    card.id = downloadId;
-    card.innerHTML = `
-      <div class="download-item-top">
-        <div class="download-item-title" title="${title}">${title}</div>
-        <span class="pill-badge preparing">Hazırlanıyor...</span>
-      </div>
-      <div class="progress-track">
-        <div class="progress-fill" style="width: 0%"></div>
-      </div>
-      <div class="download-meta-row"></div>
-    `;
-    activeList.prepend(card);
-    activeDownloadsMap.set(downloadId, card);
-    updateActiveCountBadge();
-    return card;
-  }
-
-  /** Update progress bar and percentage text */
-  function updateCardProgress(card, status) {
-    const fill = card.querySelector('.progress-fill');
-    if (fill) fill.style.width = `${status.percent}%`;
-    const meta = card.querySelector('.download-meta-row');
-    if (meta) meta.innerHTML = `
-      <span>İndiriliyor ${status.percent}% • ${status.speed} • ETA ${status.eta}</span>
-    `;
-  }
-
-  /** Transform the preparing card into a manual‑download card */
-  function transformToDownloadCard(card, status) {
-    const badge = card.querySelector('.pill-badge');
-    if (badge) {
-      badge.className = 'pill-badge completed';
-      badge.textContent = 'Hazır!';
-    }
-    const fill = card.querySelector('.progress-fill');
-    if (fill) fill.style.width = '100%';
-
-    const meta = card.querySelector('.download-meta-row');
-    const downloadUrl = `/api/download-file/${status.downloadId}`;
-    const ext = selectedFormat === 'mp3' ? 'mp3' : 'mp4';
-    if (meta) {
-      meta.innerHTML = `
-        <a href="${downloadUrl}" class="save-device-btn" download>
-          <i class="ri-download-2-line"></i> Cihazına Kaydet (${ext.toUpperCase()})
-        </a>
-      `;
-    }
-  }
-
-  // 5. Handle WebSocket Progress & Status Events
-  function handleWsEvent(data) {
-    if (data.event === 'start') {
-      createActiveDownloadCard(data.downloadId, currentVideoInfo ? currentVideoInfo.title : 'Medya Hazırlanıyor...');
-    } else if (data.event === 'progress') {
-      updateActiveDownloadCard(data);
-    } else if (data.event === 'status_update') {
-      updateActiveStatusText(data.downloadId, data.message);
-    } else if (data.event === 'complete') {
-      completeActiveDownloadCard(data);
-    } else if (data.event === 'error') {
-      markActiveDownloadError(data.downloadId, data.error);
-    } else if (data.event === 'cancelled') {
-      removeActiveDownloadCard(data.downloadId);
-    }
-  }
-
-  function createActiveDownloadCard(downloadId, title) {
+  // ── Card Creation ─────────────────────────────────────────────────────────
+  function createCard(downloadId, title, format) {
     emptyActiveState.classList.add('hidden');
 
     const card = document.createElement('div');
     card.className = 'download-item';
-    card.id = downloadId;
-
+    card.id = `card-${downloadId}`;
     card.innerHTML = `
       <div class="download-item-top">
-        <div class="download-item-title" title="${title}">${title}</div>
+        <div class="download-item-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
         <div class="download-item-actions">
-          <span class="pill-badge downloading">Hazırlanıyor</span>
-          <button class="cancel-download-btn" title="İndirmeyi İptal Et">
+          <span class="pill-badge preparing">Hazırlanıyor</span>
+          <button class="cancel-download-btn" data-id="${downloadId}" title="İptal Et">
             <i class="ri-close-line"></i> İptal
           </button>
         </div>
@@ -317,155 +238,160 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="progress-fill" style="width: 0%"></div>
       </div>
       <div class="download-meta-row">
-        <span class="speed-text"><i class="ri-pulse-line"></i> 0.0 KiB/s</span>
-        <span class="size-text">%0 / --</span>
-        <span class="eta-text">Kalan: --:--</span>
+        <span class="speed-text"><i class="ri-pulse-line"></i> —</span>
+        <span class="size-text">%0 / —</span>
+        <span class="eta-text">Kalan: —</span>
       </div>
     `;
 
-    // Attach cancel click handler
-    const cancelBtn = card.querySelector('.cancel-download-btn');
-    if (cancelBtn) {
-      cancelBtn.addEventListener('click', async () => {
-        try {
-          cancelBtn.disabled = true;
-          cancelBtn.style.opacity = '0.5';
-          if (pollInterval) clearInterval(pollInterval);
-          await fetch('/api/cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ downloadId })
-          });
-        } catch (e) {
-          console.error('Cancel request failed', e);
-        }
-      });
-    }
-
-    // HTTP Polling fallback for Vercel (every 1 second)
-    const pollInterval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/status/${downloadId}`);
-        if (!res.ok) {
-          if (res.status === 404 && activeDownloadsMap.has(downloadId)) {
-            // Check if card is completed, else ignore
-          }
-          return;
-        }
-        const data = await res.json();
-        if (data.event === 'progress') {
-          updateActiveDownloadCard(data);
-        } else if (data.event === 'complete') {
-          clearInterval(pollInterval);
-          completeActiveDownloadCard(data);
-        }
-      } catch (e) {
-        // Polling error silently ignored
-      }
-    }, 1200);
-
-    card._pollInterval = pollInterval;
+    card.querySelector('.cancel-download-btn').addEventListener('click', () => {
+      cancelDownload(downloadId);
+    });
 
     activeList.prepend(card);
-    activeDownloadsMap.set(downloadId, card);
-    updateActiveCountBadge();
+    downloadsMap.set(downloadId, { card, format, pollTimer: null });
+    updateBadge();
+    return card;
   }
 
-  function updateActiveDownloadCard(data) {
-    const card = activeDownloadsMap.get(data.downloadId);
-    if (!card) return;
+  // ── Polling (fallback if WS misses events) ────────────────────────────────
+  function startPolling(downloadId) {
+    const entry = downloadsMap.get(downloadId);
+    if (!entry) return;
 
-    const fill = card.querySelector('.progress-fill');
+    const timer = setInterval(async () => {
+      // Stop polling if card is gone
+      if (!downloadsMap.has(downloadId)) { clearInterval(timer); return; }
+
+      try {
+        const resp = await fetch(`/api/status/${downloadId}`);
+        if (resp.status === 404) { clearInterval(timer); return; }
+        if (!resp.ok) return;
+        const data = await resp.json();
+        handleServerEvent(data);
+        if (data.event === 'complete' || data.event === 'error') {
+          clearInterval(timer);
+        }
+      } catch (e) { /* ignore */ }
+    }, 1500);
+
+    entry.pollTimer = timer;
+  }
+
+  // ── Progress Update ───────────────────────────────────────────────────────
+  function updateProgress(data) {
+    const entry = downloadsMap.get(data.downloadId);
+    if (!entry) return;
+    const { card } = entry;
+
+    const fill  = card.querySelector('.progress-fill');
     const badge = card.querySelector('.pill-badge');
-    const speedText = card.querySelector('.speed-text');
-    const sizeText = card.querySelector('.size-text');
-    const etaText = card.querySelector('.eta-text');
+    const speed = card.querySelector('.speed-text');
+    const size  = card.querySelector('.size-text');
+    const eta   = card.querySelector('.eta-text');
 
-    badge.className = 'pill-badge downloading';
-    badge.textContent = 'İndiriliyor';
-
-    fill.style.width = `${data.percent}%`;
-    speedText.innerHTML = `<i class="ri-pulse-line"></i> ${data.speed}`;
-    sizeText.textContent = `%${data.percent.toFixed(1)} / ${data.totalSize}`;
-    etaText.textContent = `Kalan: ${data.eta}`;
+    if (fill)  fill.style.width = `${data.percent}%`;
+    if (badge) { badge.className = 'pill-badge downloading'; badge.textContent = 'İndiriliyor'; }
+    if (speed) speed.innerHTML = `<i class="ri-pulse-line"></i> ${data.speed || '—'}`;
+    if (size)  size.textContent = `%${parseFloat(data.percent || 0).toFixed(1)} / ${data.totalSize || '—'}`;
+    if (eta)   eta.textContent  = `Kalan: ${data.eta || '—'}`;
   }
 
-  function updateActiveStatusText(downloadId, message) {
-    const card = activeDownloadsMap.get(downloadId);
-    if (!card) return;
+  function updateStatusBadge(downloadId, message) {
+    const entry = downloadsMap.get(downloadId);
+    if (!entry) return;
+    const badge = entry.card.querySelector('.pill-badge');
+    if (badge) { badge.className = 'pill-badge converting'; badge.textContent = message || 'İşleniyor...'; }
+  }
+
+  // ── Complete ──────────────────────────────────────────────────────────────
+  function onComplete(data) {
+    const entry = downloadsMap.get(data.downloadId);
+    if (!entry) return;
+
+    const { card, pollTimer } = entry;
+    if (pollTimer) clearInterval(pollTimer);
+
+    const fill  = card.querySelector('.progress-fill');
     const badge = card.querySelector('.pill-badge');
-    badge.className = 'pill-badge converting';
-    badge.textContent = message || 'Dönüştürülüyor';
-  }
-
-  function markActiveDownloadError(downloadId, errorMsg) {
-    const card = activeDownloadsMap.get(downloadId);
-    if (!card) return;
-    const badge = card.querySelector('.pill-badge');
-    badge.className = 'pill-badge failed';
-    badge.textContent = 'Hata';
-  }
-
-  function completeActiveDownloadCard(data) {
-    const card = activeDownloadsMap.get(data.downloadId);
-    if (!card) return;
-
-    if (card._pollInterval) clearInterval(card._pollInterval);
-
+    const meta  = card.querySelector('.download-meta-row');
     const cancelBtn = card.querySelector('.cancel-download-btn');
+
+    if (fill)      fill.style.width = '100%';
+    if (badge)     { badge.className = 'pill-badge completed'; badge.textContent = 'Hazır!'; }
     if (cancelBtn) cancelBtn.remove();
 
+    const ext = entry.format === 'mp3' ? 'mp3' : 'mp4';
+    if (meta) {
+      meta.innerHTML = `
+        <span><i class="ri-check-double-line"></i> ${escapeHtml(data.filename || ('download.' + ext))}</span>
+        <a href="${data.downloadUrl}" class="save-device-btn" download="${escapeHtml(data.filename || ('download.' + ext))}">
+          <i class="ri-download-2-line"></i> Cihazına Kaydet (${ext.toUpperCase()})
+        </a>
+      `;
+    }
+  }
+
+  // ── Error ─────────────────────────────────────────────────────────────────
+  function onError(data) {
+    const entry = downloadsMap.get(data.downloadId);
+    if (!entry) return;
+
+    const { card, pollTimer } = entry;
+    if (pollTimer) clearInterval(pollTimer);
+
     const badge = card.querySelector('.pill-badge');
-    badge.className = 'pill-badge completed';
-    badge.textContent = 'Hazır!';
+    const meta  = card.querySelector('.download-meta-row');
+    const cancelBtn = card.querySelector('.cancel-download-btn');
 
-    const fill = card.querySelector('.progress-fill');
-    fill.style.width = '100%';
+    if (badge)     { badge.className = 'pill-badge failed'; badge.textContent = 'Hata'; }
+    if (cancelBtn) cancelBtn.remove();
+    if (meta) {
+      meta.innerHTML = `<span style="color: var(--error-color, #ff6b6b)"><i class="ri-error-warning-line"></i> ${escapeHtml(data.error || 'İndirme hatası')}</span>`;
+    }
 
-    const metaRow = card.querySelector('.download-meta-row');
-    metaRow.innerHTML = `
-      <span><i class="ri-check-line"></i> ${data.filename}</span>
-      <a href="${data.downloadUrl}" class="save-device-btn" download="${data.filename}">
-        <i class="ri-download-2-line"></i> Cihazına Kaydet
-      </a>
-    `;
-
-    // Automatic download removed; user must click the manual download link
-    // triggerBrowserDownload(data.downloadUrl, data.filename); // Auto download disabled; user must click manual link
+    downloadsMap.delete(data.downloadId);
+    updateBadge();
   }
 
-  function triggerBrowserDownload(url, filename) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || 'download';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  // ── Cancel ────────────────────────────────────────────────────────────────
+  async function cancelDownload(downloadId) {
+    const entry = downloadsMap.get(downloadId);
+    if (entry && entry.pollTimer) clearInterval(entry.pollTimer);
+
+    try {
+      await fetch('/api/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ downloadId })
+      });
+    } catch (e) { console.error('Cancel failed:', e); }
+
+    removeCard(downloadId);
   }
 
-  function removeActiveDownloadCard(downloadId) {
-    const card = activeDownloadsMap.get(downloadId);
-    if (card) {
-      if (card._pollInterval) clearInterval(card._pollInterval);
-      card.remove();
-      activeDownloadsMap.delete(downloadId);
-      updateActiveCountBadge();
+  function removeCard(downloadId) {
+    const entry = downloadsMap.get(downloadId);
+    if (entry) {
+      if (entry.pollTimer) clearInterval(entry.pollTimer);
+      entry.card.remove();
+      downloadsMap.delete(downloadId);
+      updateBadge();
     }
   }
 
-  function updateActiveCountBadge() {
-    const count = activeDownloadsMap.size;
+  function updateBadge() {
+    const count = downloadsMap.size;
     activeCountBadge.textContent = `${count} İşlem`;
-    if (count === 0) {
-      emptyActiveState.classList.remove('hidden');
-    }
+    if (count === 0) emptyActiveState.classList.remove('hidden');
+    else emptyActiveState.classList.add('hidden');
   }
 
-  // Helper Functions
-  function setFetchLoading(isLoading) {
-    if (isLoading) {
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function setFetchLoading(on) {
+    if (on) {
       fetchBtn.disabled = true;
-      fetchBtnText.textContent = 'Hazırlanıyor...';
+      fetchBtnText.textContent = 'Yükleniyor...';
       fetchBtn.querySelector('i').className = 'ri-loader-4-line spin-icon';
     } else {
       fetchBtn.disabled = false;
@@ -481,5 +407,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function hideError() {
     errorToast.classList.add('hidden');
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 });
