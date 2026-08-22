@@ -77,10 +77,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function isValidYoutubeUrl(url) {
+    const trimmed = url.trim();
+    return (
+      trimmed.includes('youtube.com/watch') ||
+      trimmed.includes('youtu.be/') ||
+      trimmed.includes('youtube.com/shorts/') ||
+      trimmed.includes('music.youtube.com/')
+    );
+  }
+
   async function fetchVideoInfo() {
     const url = ytUrlInput.value.trim();
     if (!url) {
-      showError('Lütfen geçerli bir YouTube bağlantısı girin.');
+      showError('Lütfen bir YouTube bağlantısı girin.');
+      return;
+    }
+
+    if (!isValidYoutubeUrl(url)) {
+      showError('Geçersiz bağlantı! Lütfen geçerli bir YouTube video veya müzik adresi girin.');
       return;
     }
 
@@ -92,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Video bilgileri alınamadı.');
+        throw new Error(data.error || 'Video bilgileri alınamadı. Geçersiz veya gizli YouTube bağlantısı olabilir.');
       }
 
       currentVideoInfo = data;
