@@ -168,40 +168,46 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 4. Start Download Request
-  startDownloadBtn.addEventListener('click', async () => {
+  startDownloadBtn.addEventListener('click', () => {
     if (!ytUrlInput.value.trim()) return;
 
     const url = ytUrlInput.value.trim();
     const quality = qualitySelect.value;
+    const title = currentVideoInfo ? currentVideoInfo.title : 'YouTube_Medya';
 
-    try {
-      startDownloadBtn.disabled = true;
-      startDownloadBtn.style.opacity = '0.6';
+    const downloadId = 'dl_' + Date.now();
+    createActiveDownloadCard(downloadId, title);
 
-      const res = await fetch('/api/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url,
-          formatType: selectedFormat,
-          quality
-        })
-      });
+    const streamUrl = `/api/stream?url=${encodeURIComponent(url)}&formatType=${selectedFormat}&quality=${quality}&title=${encodeURIComponent(title)}`;
 
-      const data = await res.json();
-      if (!res.ok) {
-        showError(data.error || 'İndirme başlatılamadı.');
-      } else {
-        // Reset input for next video download
-        ytUrlInput.value = '';
-        videoInfoCard.classList.add('hidden');
-      }
-    } catch (e) {
-      showError('Sunucu bağlantı hatası.');
-    } finally {
-      startDownloadBtn.disabled = false;
-      startDownloadBtn.style.opacity = '1';
+    const card = activeDownloadsMap.get(downloadId);
+    if (card) {
+      if (card._pollInterval) clearInterval(card._pollInterval);
+      const cancelBtn = card.querySelector('.cancel-download-btn');
+      if (cancelBtn) cancelBtn.remove();
+
+      const badge = card.querySelector('.pill-badge');
+      badge.className = 'pill-badge completed';
+      badge.textContent = 'İndiriliyor';
+
+      const fill = card.querySelector('.progress-fill');
+      fill.style.width = '100%';
+
+      const metaRow = card.querySelector('.download-meta-row');
+      metaRow.innerHTML = `
+        <span><i class="ri-check-line"></i> ${title}</span>
+        <a href="${streamUrl}" class="save-device-btn" download>
+          <i class="ri-download-2-line"></i> Cihazına Kaydet
+        </a>
+      `;
     }
+
+    // Trigger immediate direct browser download
+    triggerBrowserDownload(streamUrl, `${title}.${selectedFormat === 'mp3' ? 'mp3' : 'mp4'}`);
+
+    // Reset input
+    ytUrlInput.value = '';
+    videoInfoCard.classList.add('hidden');
   });
 
   // 5. Handle WebSocket Progress & Status Events

@@ -58,70 +58,126 @@ function formatDuration(sec) {
   return `${pad(minutes)}:${pad(seconds)}`;
 }
 
+const ytdl = require('@distube/ytdl-core');
+
 // API 1: Fetch Video Details
-app.get('/api/info', (req, res) => {
+app.get('/api/info', async (req, res) => {
   const videoUrl = req.query.url;
   if (!videoUrl) {
     return res.status(400).json({ error: 'URL parametresi gerekli.' });
   }
 
-  const args = [
-    '--js-runtimes', 'node',
-    '--dump-single-json',
-    '--no-playlist',
-    videoUrl
-  ];
+  if (fs.existsSync(YTDLP_PATH)) {
+    const args = [
+      '--js-runtimes', 'node',
+      '--dump-single-json',
+      '--no-playlist',
+      videoUrl
+    ];
 
-  const process = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+    const process = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+    let stdoutData = '';
+    let stderrData = '';
 
-  let stdoutData = '';
-  let stderrData = '';
+    process.stdout.on('data', data => { stdoutData += data; });
+    process.stderr.on('data', data => { stderrData += data; });
 
-  process.stdout.on('data', data => { stdoutData += data; });
-  process.stderr.on('data', data => { stderrData += data; });
-
-  process.on('close', code => {
-    if (code !== 0) {
-      console.error('yt-dlp error:', stderrData);
-      return res.status(500).json({ 
-        error: 'Video bilgileri alınamadı. Geçersiz YouTube bağlantısı olabilir.',
-        details: stderrData 
-      });
-    }
-
-    try {
-      const json = JSON.parse(stdoutData);
-      
-      // Extract resolutions
-      const heights = new Set();
-      if (json.formats && Array.isArray(json.formats)) {
-        json.formats.forEach(f => {
-          if (f.height && f.vcodec !== 'none') {
-            heights.add(f.height);
+    process.on('close', code => {
+      if (code === 0) {
+        try {
+          const json = JSON.parse(stdoutData);
+          const heights = new Set();
+          if (json.formats && Array.isArray(json.formats)) {
+            json.formats.forEach(f => {
+              if (f.height && f.vcodec !== 'none') heights.add(f.height);
+            });
           }
-        });
+          const availableResolutions = Array.from(heights).sort((a, b) => b - a).map(h => `${h}p`);
+          return res.json({
+            id: json.id,
+            title: json.title,
+            uploader: json.uploader || json.channel || 'Bilinmeyen Kanal',
+            duration: formatDuration(json.duration),
+            durationSec: json.duration,
+            thumbnail: json.thumbnail || (json.thumbnails && json.thumbnails.length ? json.thumbnails[json.thumbnails.length - 1].url : ''),
+            viewCount: json.view_count ? json.view_count.toLocaleString() : null,
+            availableResolutions: availableResolutions.length ? availableResolutions : ['1080p', '720p', '480p', '360p']
+          });
+        } catch (e) {}
       }
+      fallbackInfoWithYtdl(videoUrl, res);
+    });
+  } else {
+    fallbackInfoWithYtdl(videoUrl, res);
+  }
+});
 
-      const availableResolutions = Array.from(heights)
-        .sort((a, b) => b - a)
-        .map(h => `${h}p`);
+async function fallbackInfoWithYtdl(url, res) {
+  try {
+    const info = await ytdl.getInfo(url);
+    const details = info.videoDetails;
+    res.json({
+      id: details.videoId,
+      title: details.title,
+      uploader: details.author ? details.author.name : 'Bilinmeyen Kanal',
+      duration: formatDuration(parseInt(details.lengthSeconds)),
+      durationSec: parseInt(details.lengthSeconds),
+      thumbnail: details.thumbnails && details.thumbnails.length ? details.thumbnails[details.thumbnails.length - 1].url : '',
+      viewCount: details.viewCount ? parseInt(details.viewCount).toLocaleString() : null,
+      availableResolutions: ['1080p', '720p', '480p', '360p']
+    });
+  } catch (e) {
+    console.error('ytdl fallback info error:', e);
+    res.status(500).json({ error: 'Video bilgileri alınamadı. Geçersiz veya korumalı YouTube bağlantısı olabilir.' });
+  }
+}
 
-      const videoInfo = {
-        id: json.id,
-        title: json.title,
-        uploader: json.uploader || json.channel || 'Bilinmeyen Kanal',
-        duration: formatDuration(json.duration),
-        durationSec: json.duration,
-        thumbnail: json.thumbnail || (json.thumbnails && json.thumbnails.length ? json.thumbnails[json.thumbnails.length - 1].url : ''),
-        viewCount: json.view_count ? json.view_count.toLocaleString() : null,
-        availableResolutions: availableResolutions.length ? availableResolutions : ['1080p', '720p', '480p', '360p']
-      };
+// API Stream: Direct Browser Stream Download for Vercel & Local
+app.get('/api/stream', async (req, res) => {
+  const { url, formatType, quality, title } = req.query;
+  if (!url) return res.status(400).send('URL gerekli.');
 
-      res.json(videoInfo);
-    } catch (e) {
-      res.status(500).json({ error: 'Video verisi ayrıştırılamadı.' });
+  const isMp3 = formatType === 'mp3';
+  const fileExt = isMp3 ? 'mp3' : 'mp4';
+  const cleanTitle = (title || 'youtube_download').replace(/[^a-zA-Z0-9_\-\s]/g, '').trim();
+  const filename = `${cleanTitle || 'download'}.${fileExt}`;
+
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+  res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'video/mp4');
+
+  if (fs.existsSync(YTDLP_PATH)) {
+    const args = [
+      '--js-runtimes', 'node',
+      '--no-playlist',
+      '-o', '-'
+    ];
+    if (isMp3) {
+      args.push('-x', '--audio-format', 'mp3');
+    } else {
+      args.push('-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best');
     }
-  });
+    args.push(url);
+
+    const proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+    proc.stdout.pipe(res);
+    proc.stderr.on('data', data => console.error('yt-dlp stream:', data.toString()));
+  } else {
+    try {
+      const options = isMp3
+        ? { filter: 'audioonly', quality: 'highestaudio' }
+        : { filter: 'audioandvideo', quality: quality === 'best' ? 'highest' : quality };
+
+      const stream = ytdl(url, options);
+      stream.pipe(res);
+      stream.on('error', err => {
+        console.error('ytdl stream error:', err);
+        if (!res.headersSent) res.status(500).send('İndirme akışında hata oluştu.');
+      });
+    } catch (e) {
+      console.error('Stream handler error:', e);
+      if (!res.headersSent) res.status(500).send('İndirme başlatılamadı.');
+    }
+  }
 });
 
 // API 2: Start Download Task
