@@ -164,42 +164,72 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 4. Start Download Request
-  startDownloadBtn.addEventListener('click', async () => {
-    if (!ytUrlInput.value.trim()) return;
-
+  startDownloadBtn.addEventListener('click', () => {
     const url = ytUrlInput.value.trim();
+    if (!url) return;
+
     const quality = qualitySelect.value;
     const title = currentVideoInfo ? currentVideoInfo.title : 'YouTube_Medya';
+    const downloadId = 'dl_' + Date.now();
 
-    try {
-      startDownloadBtn.disabled = true;
-      startDownloadBtn.style.opacity = '0.6';
+    const fileExt = selectedFormat === 'mp3' ? 'mp3' : 'mp4';
+    const streamUrl = `/api/stream?url=${encodeURIComponent(url)}&formatType=${selectedFormat}&quality=${quality}&title=${encodeURIComponent(title)}`;
 
-      const res = await fetch('/api/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url,
-          formatType: selectedFormat,
-          quality
-        })
-      });
+    // Create item in list immediately
+    createCompletedCard(downloadId, title, streamUrl, fileExt);
 
-      const data = await res.json();
-      if (!res.ok) {
-        showError(data.error || 'İndirme başlatılamadı.');
-      } else {
-        createActiveDownloadCard(data.downloadId, title);
-        ytUrlInput.value = '';
-        videoInfoCard.classList.add('hidden');
-      }
-    } catch (e) {
-      showError('Sunucu bağlantı hatası. Lütfen tekrar deneyin.');
-    } finally {
-      startDownloadBtn.disabled = false;
-      startDownloadBtn.style.opacity = '1';
-    }
+    // Trigger instant browser download
+    triggerBrowserDownload(streamUrl, `${title}.${fileExt}`);
+
+    // Reset UI
+    ytUrlInput.value = '';
+    videoInfoCard.classList.add('hidden');
   });
+
+  function createCompletedCard(downloadId, title, streamUrl, ext) {
+    emptyActiveState.classList.add('hidden');
+
+    const card = document.createElement('div');
+    card.className = 'download-item';
+    card.id = downloadId;
+
+    card.innerHTML = `
+      <div class="download-item-top">
+        <div class="download-item-title" title="${title}">${title}</div>
+        <span class="pill-badge completed">İndiriliyor...</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width: 100%"></div>
+      </div>
+      <div class="download-meta-row">
+        <span><i class="ri-check-line"></i> Tarayıcıya aktarılıyor (${ext.toUpperCase()})</span>
+        <a href="${streamUrl}" class="save-device-btn" download="${title}.${ext}">
+          <i class="ri-download-2-line"></i> Tekrar İndir
+        </a>
+      </div>
+    `;
+
+    activeList.prepend(card);
+    activeDownloadsMap.set(downloadId, card);
+    updateActiveCountBadge();
+  }
+
+  function triggerBrowserDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function updateActiveCountBadge() {
+    const count = activeDownloadsMap.size;
+    activeCountBadge.textContent = `${count} İşlem`;
+    if (count === 0) {
+      emptyActiveState.classList.remove('hidden');
+    }
+  }
 
   // 5. Handle WebSocket Progress & Status Events
   function handleWsEvent(data) {
