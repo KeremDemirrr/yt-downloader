@@ -1,19 +1,19 @@
 {
-  "name": "yt-downloader-mac",
+  "name": "yt-downloader",
   "version": "1.0.0",
-  "description": "macOS YouTube Video and MP3 Downloader App",
+  "description": "YouTube Video & MP3 Downloader — Render deployment",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp-linux && chmod +x ./yt-dlp-linux",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "build": "pip3 install yt-dlp || pip install yt-dlp || echo 'pip not available, yt-dlp must be pre-installed'"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "play-dl": "^1.9.7",
-    "ws": "^8.18.0",
-    "youtube-dl-exec": "^3.1.12"
+    "ws": "^8.18.0"
   }
 }

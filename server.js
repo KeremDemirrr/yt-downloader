@@ -20,17 +20,25 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
-const LINUX_YTDLP = path.join(__dirname, 'yt-dlp-linux');
-const MAC_YTDLP = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
+// yt-dlp binary detection — Render (Linux pip install), local Mac venv, or system PATH
+const RENDER_YTDLP = '/usr/local/bin/yt-dlp';   // pip install --target or pip3 install yt-dlp on Render
+const LINUX_YTDLP  = path.join(__dirname, 'yt-dlp-linux');
+const MAC_YTDLP    = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
 
 let YTDLP_PATH = 'yt-dlp';
-if (fs.existsSync(LINUX_YTDLP)) {
+if (fs.existsSync(RENDER_YTDLP)) {
+  YTDLP_PATH = RENDER_YTDLP;
+} else if (fs.existsSync(LINUX_YTDLP)) {
   YTDLP_PATH = LINUX_YTDLP;
 } else if (fs.existsSync(MAC_YTDLP)) {
   YTDLP_PATH = MAC_YTDLP;
 }
 
 console.log('Using yt-dlp at:', YTDLP_PATH);
+
+// Render uses /usr/bin/ffmpeg; macOS Homebrew uses /opt/homebrew/bin
+const isRender = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
+const FFMPEG_LOCATION = isRender ? '/usr/bin' : '/opt/homebrew/bin';
 
 const CUSTOM_ENV = {
   ...process.env,
@@ -174,7 +182,7 @@ app.post('/api/download', (req, res) => {
   const args = [
     '--newline', '--progress',
     '--no-warnings', '--no-check-certificates',
-    '--ffmpeg-location', '/opt/homebrew/bin',
+    '--ffmpeg-location', FFMPEG_LOCATION,
     '-o', outputTemplate
   ];
 
