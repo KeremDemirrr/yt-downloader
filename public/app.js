@@ -78,13 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function isValidYoutubeUrl(url) {
-    const trimmed = url.trim();
-    return (
-      trimmed.includes('youtube.com/watch') ||
-      trimmed.includes('youtu.be/') ||
-      trimmed.includes('youtube.com/shorts/') ||
-      trimmed.includes('music.youtube.com/')
-    );
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim().toLowerCase();
+    return trimmed.includes('youtube.com') || trimmed.includes('youtu.be');
   }
 
   async function fetchVideoInfo() {

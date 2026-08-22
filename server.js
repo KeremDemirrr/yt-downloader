@@ -112,9 +112,18 @@ app.get('/api/info', async (req, res) => {
   }
 });
 
+const YTDL_OPTIONS = {
+  requestOptions: {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8'
+    }
+  }
+};
+
 async function fallbackInfoWithYtdl(url, res) {
   try {
-    const info = await ytdl.getInfo(url);
+    const info = await ytdl.getInfo(url, YTDL_OPTIONS);
     const details = info.videoDetails;
     res.json({
       id: details.videoId,
@@ -163,9 +172,12 @@ app.get('/api/stream', async (req, res) => {
     proc.stderr.on('data', data => console.error('yt-dlp stream:', data.toString()));
   } else {
     try {
-      const options = isMp3
-        ? { filter: 'audioonly', quality: 'highestaudio' }
-        : { filter: 'audioandvideo', quality: quality === 'best' ? 'highest' : quality };
+      const options = {
+        ...YTDL_OPTIONS,
+        ...(isMp3
+          ? { filter: 'audioonly', quality: 'highestaudio' }
+          : { filter: 'audioandvideo', quality: quality === 'best' ? 'highest' : quality })
+      };
 
       const stream = ytdl(url, options);
       stream.pipe(res);
