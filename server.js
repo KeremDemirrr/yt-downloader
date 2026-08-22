@@ -290,7 +290,40 @@ app.post('/api/download', (req, res) => {
   });
 });
 
-// API 3: Serve direct file download to client browser
+// API 3: Get Status of Active or Ready Download (HTTP Polling fallback for Vercel)
+app.get('/api/status/:id', (req, res) => {
+  const downloadId = req.params.id;
+  const activeItem = activeDownloads.get(downloadId);
+
+  if (activeItem) {
+    return res.json({
+      event: 'progress',
+      downloadId,
+      percent: activeItem.percent,
+      totalSize: activeItem.totalSize,
+      speed: activeItem.speed,
+      eta: activeItem.eta,
+      status: activeItem.status,
+      filename: activeItem.filename
+    });
+  }
+
+  const readyItem = readyDownloads.get(downloadId);
+  if (readyItem) {
+    return res.json({
+      event: 'complete',
+      downloadId,
+      filename: readyItem.filename,
+      percent: 100,
+      status: 'completed',
+      downloadUrl: `/api/download-file/${downloadId}`
+    });
+  }
+
+  res.status(404).json({ error: 'İndirme bulunamadı' });
+});
+
+// API 4: Serve direct file download to client browser
 app.get('/api/download-file/:id', (req, res) => {
   const downloadId = req.params.id;
   const item = readyDownloads.get(downloadId);
@@ -312,7 +345,7 @@ app.get('/api/download-file/:id', (req, res) => {
   });
 });
 
-// API 4: Cancel Active Download
+// API 5: Cancel Active Download
 app.post('/api/cancel', (req, res) => {
   const { downloadId } = req.body;
   const item = activeDownloads.get(downloadId);

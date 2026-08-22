@@ -240,6 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           cancelBtn.disabled = true;
           cancelBtn.style.opacity = '0.5';
+          if (pollInterval) clearInterval(pollInterval);
           await fetch('/api/cancel', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -250,6 +251,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
     }
+
+    // HTTP Polling fallback for Vercel (every 1 second)
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/status/${downloadId}`);
+        if (!res.ok) {
+          if (res.status === 404 && activeDownloadsMap.has(downloadId)) {
+            // Check if card is completed, else ignore
+          }
+          return;
+        }
+        const data = await res.json();
+        if (data.event === 'progress') {
+          updateActiveDownloadCard(data);
+        } else if (data.event === 'complete') {
+          clearInterval(pollInterval);
+          completeActiveDownloadCard(data);
+        }
+      } catch (e) {
+        // Polling error silently ignored
+      }
+    }, 1200);
+
+    card._pollInterval = pollInterval;
 
     activeList.prepend(card);
     activeDownloadsMap.set(downloadId, card);
@@ -295,6 +320,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const card = activeDownloadsMap.get(data.downloadId);
     if (!card) return;
 
+    if (card._pollInterval) clearInterval(card._pollInterval);
+
     const cancelBtn = card.querySelector('.cancel-download-btn');
     if (cancelBtn) cancelBtn.remove();
 
@@ -329,6 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function removeActiveDownloadCard(downloadId) {
     const card = activeDownloadsMap.get(downloadId);
     if (card) {
+      if (card._pollInterval) clearInterval(card._pollInterval);
       card.remove();
       activeDownloadsMap.delete(downloadId);
       updateActiveCountBadge();
