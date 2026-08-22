@@ -21,8 +21,16 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
-// Path to yt-dlp binary in venv
-const YTDLP_PATH = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
+// Path to yt-dlp binary (Render Linux build binary or local Mac venv)
+const LINUX_YTDLP = path.join(__dirname, 'yt-dlp-linux');
+const MAC_YTDLP = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
+
+let YTDLP_PATH = 'yt-dlp';
+if (fs.existsSync(LINUX_YTDLP)) {
+  YTDLP_PATH = LINUX_YTDLP;
+} else if (fs.existsSync(MAC_YTDLP)) {
+  YTDLP_PATH = MAC_YTDLP;
+}
 
 // Custom PATH environment to ensure ffmpeg and node are found
 const CUSTOM_ENV = {
@@ -466,8 +474,8 @@ wss.on('connection', ws => {
   ws.send(JSON.stringify({ event: 'connected', message: 'WebSocket Bağlandı' }));
 });
 
-const PORT = 3820;
+const PORT = process.env.PORT || 3820;
 server.listen(PORT, () => {
-  console.log(`YouTube Downloader Backend listening on http://localhost:${PORT}`);
+  console.log(`YouTube Downloader Backend listening on port ${PORT}`);
 });
 

@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "build": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp-linux && chmod +x ./yt-dlp-linux",
     "dev": "node --watch server.js"
   },
   "dependencies": {
