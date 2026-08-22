@@ -163,71 +163,119 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // 4. Start Download Request
+  // 4. Start Download Request (two‑step preparation)
   startDownloadBtn.addEventListener('click', () => {
     const url = ytUrlInput.value.trim();
     if (!url) return;
 
     const quality = qualitySelect.value;
     const title = currentVideoInfo ? currentVideoInfo.title : 'YouTube_Medya';
-    const downloadId = 'dl_' + Date.now();
+    const format = selectedFormat; // "mp3" or "mp4"
 
-    const fileExt = selectedFormat === 'mp3' ? 'mp3' : 'mp4';
-    const streamUrl = `/api/stream?url=${encodeURIComponent(url)}&formatType=${selectedFormat}&quality=${quality}&title=${encodeURIComponent(title)}`;
+    // Disable UI while request is sent
+    startDownloadBtn.disabled = true;
+    startDownloadBtn.style.opacity = '0.6';
 
-    // Create item in list immediately
-    createCompletedCard(downloadId, title, streamUrl, fileExt);
-
-    // Trigger instant browser download
-    triggerBrowserDownload(streamUrl, `${title}.${fileExt}`);
-
-    // Reset UI
-    ytUrlInput.value = '';
-    videoInfoCard.classList.add('hidden');
+    fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, formatType: format, quality })
+    })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          showError(data.error || 'İndirme başlatılamadı.');
+          return;
+        }
+        const downloadId = data.downloadId;
+        // Automatic download removed; user must click the manual download linkId;
+        // Create a card that shows "Hazırlanıyor..." and a progress bar
+        const card = createPreparingCard(downloadId, title, format);
+        // Start polling for status
+        const poll = setInterval(() => {
+          fetch(`/api/status/${downloadId}`)
+            .then(r => r.json())
+            .then(status => {
+              if (status.event === 'progress') {
+                updateCardProgress(card, status);
+              } else if (status.event === 'complete') {
+                clearInterval(poll);
+                transformToDownloadCard(card, status);
+              } else if (status.event === 'error') {
+                clearInterval(poll);
+                showError(status.error || 'İndirme hatası.');
+                card.remove();
+              }
+            })
+            .catch(err => {
+              clearInterval(poll);
+              console.error(err);
+            });
+        }, 2000);
+      })
+      .catch(err => {
+        console.error(err);
+        showError('Sunucu bağlantı hatası.');
+      })
+      .finally(() => {
+        startDownloadBtn.disabled = false;
+        startDownloadBtn.style.opacity = '1';
+        ytUrlInput.value = '';
+        videoInfoCard.classList.add('hidden');
+      });
   });
 
-  function createCompletedCard(downloadId, title, streamUrl, ext) {
+  /** Create a card that indicates the video is being prepared */
+  function createPreparingCard(downloadId, title, format) {
     emptyActiveState.classList.add('hidden');
-
     const card = document.createElement('div');
     card.className = 'download-item';
     card.id = downloadId;
-
     card.innerHTML = `
       <div class="download-item-top">
         <div class="download-item-title" title="${title}">${title}</div>
-        <span class="pill-badge completed">İndiriliyor...</span>
+        <span class="pill-badge preparing">Hazırlanıyor...</span>
       </div>
       <div class="progress-track">
-        <div class="progress-fill" style="width: 100%"></div>
+        <div class="progress-fill" style="width: 0%"></div>
       </div>
-      <div class="download-meta-row">
-        <span><i class="ri-check-line"></i> Tarayıcıya aktarılıyor (${ext.toUpperCase()})</span>
-        <a href="${streamUrl}" class="save-device-btn" download="${title}.${ext}">
-          <i class="ri-download-2-line"></i> Tekrar İndir
-        </a>
-      </div>
+      <div class="download-meta-row"></div>
     `;
-
     activeList.prepend(card);
     activeDownloadsMap.set(downloadId, card);
     updateActiveCountBadge();
+    return card;
   }
 
-  function triggerBrowserDownload(url, filename) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || 'download';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  /** Update progress bar and percentage text */
+  function updateCardProgress(card, status) {
+    const fill = card.querySelector('.progress-fill');
+    if (fill) fill.style.width = `${status.percent}%`;
+    const meta = card.querySelector('.download-meta-row');
+    if (meta) meta.innerHTML = `
+      <span>İndiriliyor ${status.percent}% • ${status.speed} • ETA ${status.eta}</span>
+    `;
   }
 
-  function updateActiveCountBadge() {
-    const count = activeDownloadsMap.size;
-    activeCountBadge.textContent = `${count} İşlem`;
-    if (count === 0) {
-      emptyActiveState.classList.remove('hidden');
+  /** Transform the preparing card into a manual‑download card */
+  function transformToDownloadCard(card, status) {
+    const badge = card.querySelector('.pill-badge');
+    if (badge) {
+      badge.className = 'pill-badge completed';
+      badge.textContent = 'Hazır!';
+    }
+    const fill = card.querySelector('.progress-fill');
+    if (fill) fill.style.width = '100%';
+
+    const meta = card.querySelector('.download-meta-row');
+    const downloadUrl = `/api/download-file/${status.downloadId}`;
+    const ext = selectedFormat === 'mp3' ? 'mp3' : 'mp4';
+    if (meta) {
+      meta.innerHTML = `
+        <a href="${downloadUrl}" class="save-device-btn" download>
+          <i class="ri-download-2-line"></i> Cihazına Kaydet (${ext.toUpperCase()})
+        </a>
+      `;
     }
   }
 
@@ -382,8 +430,8 @@ document.addEventListener('DOMContentLoaded', () => {
       </a>
     `;
 
-    // Trigger automatic browser download
-    triggerBrowserDownload(data.downloadUrl, data.filename);
+    // Automatic download removed; user must click the manual download link
+    // triggerBrowserDownload(data.downloadUrl, data.filename); // Auto download disabled; user must click manual link
   }
 
   function triggerBrowserDownload(url, filename) {
