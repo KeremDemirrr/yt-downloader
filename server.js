@@ -20,9 +20,33 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
+// ── ffmpeg detection (using ffmpeg-static npm package as primary) ───────────
+function findFfmpeg() {
+  try {
+    const ffmpegStatic = require('ffmpeg-static');
+    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
+      return ffmpegStatic;
+    }
+  } catch (_) {}
+
+  const systemPaths = [
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    '/opt/homebrew/bin/ffmpeg'
+  ];
+  for (const p of systemPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return 'ffmpeg';
+}
+
+const FFMPEG_PATH = findFfmpeg();
+console.log('Using ffmpeg at:', FFMPEG_PATH);
+
 // ── yt-dlp binary detection ────────────────────────────────────────────────
 function findYtdlp() {
   const candidates = [
+    path.join(__dirname, 'yt-dlp'),                          // standalone binary downloaded in build
     path.join(__dirname, 'venv', 'bin', 'yt-dlp'),           // local venv
     path.join(os.homedir(), '.local', 'bin', 'yt-dlp'),      // pip install --user (Render)
     '/usr/local/bin/yt-dlp',                                  // pip global
@@ -41,36 +65,19 @@ function findYtdlp() {
 const YTDLP_PATH = findYtdlp();
 console.log('Using yt-dlp at:', YTDLP_PATH);
 
-// ── ffmpeg detection ───────────────────────────────────────────────────────
-function findFfmpegDir() {
-  const dirs = [
-    '/usr/bin',              // Linux / Render
-    '/usr/local/bin',        // Linux / BSD
-    '/opt/homebrew/bin',     // macOS Apple Silicon
-    '/usr/local/opt/ffmpeg/bin', // macOS Intel
-  ];
-  for (const d of dirs) {
-    if (fs.existsSync(path.join(d, 'ffmpeg'))) return d;
-  }
-  return '/usr/bin';
-}
-
-const FFMPEG_LOCATION = findFfmpegDir();
-console.log('Using ffmpeg from:', FFMPEG_LOCATION);
-
 const CUSTOM_ENV = {
   ...process.env,
-  PATH: `${FFMPEG_LOCATION}:/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
+  PATH: `${path.dirname(FFMPEG_PATH)}:/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
 };
 
-// Common yt-dlp args for bypassing datacenter/cloud IP blocks on Render/AWS/VPS
+// Common yt-dlp args
 const COMMON_YTDLP_ARGS = [
   '--force-ipv4',
   '--no-warnings',
   '--no-check-certificates',
   '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
   '--add-header', 'Accept-Language: tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-  '--extractor-args', 'youtube:player_client=mweb,web,android'
+  '--ffmpeg-location', FFMPEG_PATH
 ];
 
 const activeDownloads = new Map();
@@ -260,7 +267,6 @@ app.post('/api/download', (req, res) => {
     '--newline', '--progress',
     ...COMMON_YTDLP_ARGS,
     '--restrict-filenames',
-    '--ffmpeg-location', FFMPEG_LOCATION,
     '-o', outputTemplate
   ];
 
@@ -269,7 +275,7 @@ app.post('/api/download', (req, res) => {
   } else {
     const maxH = quality && quality !== 'best' ? quality.replace('p', '') : '1080';
     args.push(
-      '-f', `bestvideo[height<=${maxH}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${maxH}]+bestaudio/best[height<=${maxH}]/best`,
+      '-f', `bv*[height<=${maxH}][ext=mp4]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}]/b`,
       '--merge-output-format', 'mp4'
     );
   }
@@ -281,9 +287,9 @@ app.post('/api/download', (req, res) => {
   try {
     proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
   } catch (err) {
-    console.error(`[${downloadId}] yt-dlp spawn error:`, err.message);
+    console.error(`[${downloadId}] spawn error:`, err.message);
     activeDownloads.delete(downloadId);
-    broadcast({ event: 'error', downloadId, error: 'yt-dlp çalıştırılamadı.' });
+    broadcast({ event: 'error', downloadId, error: 'İndirme başlatılamadı.' });
     return;
   }
 
@@ -368,7 +374,7 @@ app.post('/api/download', (req, res) => {
   proc.on('error', err => {
     console.error(`[${downloadId}] spawn error:`, err.message);
     activeDownloads.delete(downloadId);
-    broadcast({ event: 'error', downloadId, error: 'İndirme başlatılamadı.' });
+    broadcast({ event: 'error', downloadId, error: 'İndirme işlemi başlatılamadı.' });
   });
 
   proc.on('close', code => {
@@ -387,7 +393,7 @@ app.post('/api/download', (req, res) => {
 
       if (!finalPath || !fs.existsSync(finalPath)) {
         console.error(`[${downloadId}] File not found after completion`);
-        broadcast({ event: 'error', downloadId, error: 'İndirme tamamlandı ama dosya bulunamadı. Lütfen tekrar deneyin.' });
+        broadcast({ event: 'error', downloadId, error: 'İndirme tamamlandı ama dosya oluşturulamadı. Lütfen tekrar deneyin.' });
         return;
       }
 
@@ -410,7 +416,7 @@ app.post('/api/download', (req, res) => {
       let userError = 'İndirme tamamlanamadı. Lütfen tekrar deneyin.';
       
       if (stderrBuf.includes('Sign in to confirm your age')) {
-        userError = 'Bu video yaş sınırlamasına sahiptir (+18). İndirilemez.';
+        userError = 'Bu video yaş sınırlamasına sahiptir (+18).';
       } else if (stderrBuf.includes('Private video') || stderrBuf.includes('Video unavailable')) {
         userError = 'Bu video gizli veya kullanılamıyor.';
       } else if (stderrBuf.includes('HTTP Error 429')) {
@@ -523,7 +529,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     ytdlp: YTDLP_PATH,
-    ffmpeg: FFMPEG_LOCATION,
+    ffmpeg: FFMPEG_PATH,
     activeDownloads: activeDownloads.size,
     readyDownloads: readyDownloads.size
   });
@@ -533,5 +539,5 @@ const PORT = process.env.PORT || 3820;
 server.listen(PORT, () => {
   console.log(`YouTube Downloader running on port ${PORT}`);
   console.log(`yt-dlp: ${YTDLP_PATH}`);
-  console.log(`ffmpeg: ${FFMPEG_LOCATION}`);
+  console.log(`ffmpeg: ${FFMPEG_PATH}`);
 });
