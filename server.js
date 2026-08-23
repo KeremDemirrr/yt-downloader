@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const TEMP_DIR = path.join(os.tmpdir(), 'yt-downloader-temp');
@@ -20,7 +20,7 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
-// ── ffmpeg detection ───────────────────────────────────────────────────────
+// ── ffmpeg detection (using bundled ffmpeg-static) ─────────────────────────
 function findFfmpeg() {
   try {
     const ffmpegStatic = require('ffmpeg-static');
@@ -29,12 +29,7 @@ function findFfmpeg() {
     }
   } catch (_) {}
 
-  const systemPaths = [
-    '/usr/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/opt/homebrew/bin/ffmpeg'
-  ];
-  for (const p of systemPaths) {
+  for (const p of ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg']) {
     if (fs.existsSync(p)) return p;
   }
   return 'ffmpeg';
@@ -51,20 +46,16 @@ function ensureYtdlp() {
     return binaryPath;
   }
 
-  // Local development venv
   const venvPath = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
   if (fs.existsSync(venvPath)) return venvPath;
 
-  // Pip user install
   const userPip = path.join(os.homedir(), '.local', 'bin', 'yt-dlp');
   if (fs.existsSync(userPip)) return userPip;
 
-  // System binaries
   for (const sys of ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp']) {
     if (fs.existsSync(sys)) return sys;
   }
 
-  // Standalone download fallback
   try {
     console.log('Auto-downloading standalone yt-dlp binary...');
     execSync(`curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${binaryPath}" && chmod 755 "${binaryPath}"`);
@@ -79,50 +70,19 @@ function ensureYtdlp() {
 const YTDLP_PATH = ensureYtdlp();
 console.log('Using yt-dlp at:', YTDLP_PATH);
 
-// ── Cookie handling (for cloud/datacenter IP support) ──────────────────────
-const COOKIES_FILE = path.join(TEMP_DIR, 'cookies.txt');
-function setupCookies() {
-  if (process.env.YOUTUBE_COOKIES) {
-    try {
-      fs.writeFileSync(COOKIES_FILE, process.env.YOUTUBE_COOKIES.trim(), 'utf8');
-      console.log('Cookies loaded from YOUTUBE_COOKIES environment variable.');
-      return COOKIES_FILE;
-    } catch (e) {
-      console.error('Failed to write YOUTUBE_COOKIES:', e.message);
-    }
-  }
-  const localCookieFile = path.join(__dirname, 'cookies.txt');
-  if (fs.existsSync(localCookieFile)) {
-    return localCookieFile;
-  }
-  return null;
-}
-
-const ACTIVE_COOKIES = setupCookies();
-
 const CUSTOM_ENV = {
   ...process.env,
   PATH: `${path.dirname(FFMPEG_PATH)}:/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
 };
 
-function getBaseArgs() {
-  const args = [
-    '--js-runtimes', 'node',
-    '--force-ipv4',
-    '--no-warnings',
-    '--no-check-certificates',
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    '--add-header', 'Accept-Language: tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    '--ffmpeg-location', FFMPEG_PATH
-  ];
-
-  const cookiePath = setupCookies();
-  if (cookiePath && fs.existsSync(cookiePath)) {
-    args.push('--cookies', cookiePath);
-  }
-
-  return args;
-}
+// Common arguments: Android client bypasses cloud/datacenter IP blocks with zero cookies required
+const COMMON_YTDLP_ARGS = [
+  '--force-ipv4',
+  '--no-warnings',
+  '--no-check-certificates',
+  '--extractor-args', 'youtube:player_client=android',
+  '--ffmpeg-location', FFMPEG_PATH
+];
 
 const activeDownloads = new Map();
 const readyDownloads = new Map();
@@ -152,13 +112,12 @@ function broadcast(data) {
   });
 }
 
-// ── Temp directory cleanup (files older than 30m) ──────────────────────────
+// ── Temp directory cleanup ─────────────────────────────────────────────────
 setInterval(() => {
   try {
     const files = fs.readdirSync(TEMP_DIR);
     const now = Date.now();
     for (const f of files) {
-      if (f === 'cookies.txt') continue;
       const fp = path.join(TEMP_DIR, f);
       try {
         const stat = fs.statSync(fp);
@@ -201,7 +160,7 @@ app.get('/api/info', async (req, res) => {
   const videoId = getYouTubeVideoId(videoUrl);
   const args = [
     '--dump-json',
-    ...getBaseArgs(),
+    ...COMMON_YTDLP_ARGS,
     videoUrl
   ];
   
@@ -310,7 +269,7 @@ app.post('/api/download', (req, res) => {
   const outputTemplate = path.join(TEMP_DIR, `${downloadId}_%(title)s.%(ext)s`);
   const args = [
     '--newline', '--progress',
-    ...getBaseArgs(),
+    ...COMMON_YTDLP_ARGS,
     '--restrict-filenames',
     '-o', outputTemplate
   ];
@@ -320,7 +279,7 @@ app.post('/api/download', (req, res) => {
   } else {
     const maxH = quality && quality !== 'best' ? quality.replace('p', '') : '1080';
     args.push(
-      '-f', `bv*[height<=${maxH}][ext=mp4]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}]/b`,
+      '-f', `bv*[height<=${maxH}][ext=mp4]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}]/best`,
       '--merge-output-format', 'mp4'
     );
   }
@@ -350,7 +309,7 @@ app.post('/api/download', (req, res) => {
     for (const line of lines) {
       if (!line.trim()) continue;
 
-      // Progress match
+      // Progress match: [download]  45.3% of  50.00MiB at   2.13MiB/s ETA 00:18
       const pm = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\s*\w+)\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/);
       if (pm) {
         state.percent = parseFloat(pm[1]);
@@ -459,19 +418,14 @@ app.post('/api/download', (req, res) => {
         downloadUrl: `/api/download-file/${downloadId}`
       });
     } else {
-      // Extract exact meaningful error from yt-dlp stderr
       let userError = 'İndirme tamamlanamadı.';
       
       if (stderrBuf.includes('Sign in to confirm your age')) {
-        userError = 'Bu video yaş sınırlamasına (+18) sahiptir. İndirilemez.';
-      } else if (stderrBuf.includes('Sign in to confirm you’re not a bot') || stderrBuf.includes('Sign in to confirm you\'re not a bot')) {
-        userError = 'YouTube bot engeli uyguladı. Lütfen Render ortam değişkenlerine YOUTUBE_COOKIES ekleyin.';
+        userError = 'Bu video yaş sınırlamasına (+18) sahiptir.';
       } else if (stderrBuf.includes('Private video') || stderrBuf.includes('Video unavailable')) {
         userError = 'Bu video gizli veya kullanılamıyor.';
       } else if (stderrBuf.includes('HTTP Error 429')) {
         userError = 'YouTube hız limiti aşıldı. Lütfen 1-2 dakika sonra tekrar deneyin.';
-      } else if (stderrBuf.includes('Permission denied')) {
-        userError = 'Sunucu dosya izni hatası.';
       } else {
         const errorLine = stderrBuf.split('\n').find(l => l.includes('ERROR:')) || '';
         if (errorLine) {
@@ -579,14 +533,13 @@ app.post('/api/cancel', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Health check & diagnostic endpoint for Render
+// Health check
 // ════════════════════════════════════════════════════════════════════════════
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     ytdlp: YTDLP_PATH,
     ffmpeg: FFMPEG_PATH,
-    cookiesLoaded: fs.existsSync(COOKIES_FILE) || !!process.env.YOUTUBE_COOKIES,
     activeDownloads: activeDownloads.size,
     readyDownloads: readyDownloads.size
   });
