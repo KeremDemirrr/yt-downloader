@@ -9,8 +9,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <!-- Remix Icons -->
-  <link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,13 +21,16 @@
     <header class="navbar">
       <div class="brand">
         <div class="brand-logo">
-          <i class="ri-play-fill"></i>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
         </div>
         <span class="brand-name">KeremThe.Dev</span>
         <span class="badge-pro">PRO</span>
       </div>
       <div class="nav-tagline">
-        <span class="badge-ai"><i class="ri-sparkles-fill"></i> Made by AI</span>
+        <span class="badge-ai">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z"/></svg>
+          Made by AI
+        </span>
       </div>
     </header>
 
@@ -46,7 +47,7 @@
       <section class="apple-card input-card">
         <div class="input-group">
           <div class="input-icon">
-            <i class="ri-link-m"></i>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           </div>
           <input 
             type="text" 
@@ -56,18 +57,18 @@
             spellcheck="false"
           >
           <button id="pasteBtn" class="pill-btn secondary" title="Panodan Yapıştır">
-            <i class="ri-clipboard-line"></i>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             <span>Yapıştır</span>
           </button>
           <button id="fetchBtn" class="pill-btn primary">
             <span id="fetchBtnText">Hazırla</span>
-            <i class="ri-arrow-right-s-line"></i>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9,18 15,12 9,6"/></svg>
           </button>
         </div>
 
         <!-- Error Alert -->
         <div id="errorToast" class="alert alert-error hidden">
-          <i class="ri-error-warning-line"></i>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           <span id="errorMessage"></span>
         </div>
 
@@ -82,24 +83,25 @@
             <div>
               <h2 id="videoTitle" class="media-title">Video Başlığı Yükleniyor...</h2>
               <p id="videoChannel" class="media-channel">
-                <i class="ri-user-3-line"></i> <span>Kanal İsmi</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span>Kanal İsmi</span>
               </p>
             </div>
 
             <div class="format-controls">
               <div class="segmented-control">
                 <button class="segment-btn active" data-type="video">
-                  <i class="ri-movie-line"></i>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg>
                   <span>Video (MP4)</span>
                 </button>
                 <button class="segment-btn" data-type="mp3">
-                  <i class="ri-music-2-line"></i>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
                   <span>Ses (MP3)</span>
                 </button>
               </div>
 
               <div id="qualitySelectorGroup" class="select-wrapper">
-                <i class="ri-equalizer-line select-icon"></i>
+                <svg class="select-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
                 <select id="qualitySelect">
                   <option value="best">En Yüksek Kalite (Otomatik)</option>
                   <option value="2160p">4K Ultra HD (2160p)</option>
@@ -110,12 +112,13 @@
               </div>
 
               <div id="mp3InfoGroup" class="mp3-badge hidden">
-                <i class="ri-sparkles-line"></i> 320 kbps Ultra HQ MP3 Sesi
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z"/></svg>
+                320 kbps Ultra HQ MP3 Sesi
               </div>
             </div>
 
             <button id="startDownloadBtn" class="download-action-btn">
-              <i class="ri-download-cloud-2-line"></i>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21,15v4a2,2,0,0,1-2,2H5a2,2,0,0,1-2-2V15"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span>İndirmeyi Başlat</span>
             </button>
           </div>
@@ -126,14 +129,17 @@
       <section class="apple-card downloads-card">
         <div class="card-header">
           <h2 class="card-title">
-            <i class="ri-download-2-line"></i> Aktif İndirmeler
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21,15v4a2,2,0,0,1-2,2H5a2,2,0,0,1-2-2V15"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Aktif İndirmeler
           </h2>
           <span id="activeCountBadge" class="status-counter">0 İşlem</span>
         </div>
 
         <div id="activeList" class="downloads-list">
           <div class="empty-state" id="emptyActiveState">
-            <div class="empty-icon"><i class="ri-download-cloud-line"></i></div>
+            <div class="empty-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="8,17 12,21 16,17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88,18.09A5,5,0,0,0,18,9h-1.26A8,8,0,1,0,3,16.29"/></svg>
+            </div>
             <p class="empty-title">Aktif indirme yok</p>
             <p class="empty-sub">Bir YouTube bağlantısı girerek cihazınıza indirmeye başlayabilirsiniz.</p>
           </div>
@@ -142,14 +148,16 @@
 
     </main>
 
-    <!-- Apple-style Minimal Footer -->
+    <!-- Footer -->
     <footer class="app-footer">
-      <p>© <strong>KeremThe.Dev</strong> • Tüm indirmeler doğrudan kendi cihazınızın tarayıcısına kaydedilir.</p>
-      <div class="ai-footer-tag"><i class="ri-sparkles-line"></i> Powered & Crafted with AI</div>
+      <p>&copy; <strong>KeremThe.Dev</strong> &bull; Tüm indirmeler doğrudan kendi cihazınızın tarayıcısına kaydedilir.</p>
+      <div class="ai-footer-tag">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z"/></svg>
+        Powered &amp; Crafted with AI
+      </div>
     </footer>
   </div>
 
   <script src="app.js"></script>
 </body>
 </html>
-

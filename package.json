@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "build": "pip3 install yt-dlp || pip install yt-dlp || echo 'pip not available, yt-dlp must be pre-installed'"
+    "build": "pip install yt-dlp --user || pip3 install yt-dlp || echo 'yt-dlp install fallback'"
   },
   "engines": {
     "node": ">=18.0.0"

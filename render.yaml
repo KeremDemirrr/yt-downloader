@@ -1,12 +1,12 @@
 services:
   - type: web
     name: yt-downloader
-    env: node
-    buildCommand: npm install && pip3 install yt-dlp
+    runtime: node
+    buildCommand: npm install && pip install yt-dlp --user || pip3 install yt-dlp || echo "yt-dlp install failed"
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
+      - key: RENDER
+        value: "true"
     autoDeploy: true

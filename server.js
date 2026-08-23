@@ -4,7 +4,7 @@ const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const cors = require('cors');
 
 const app = express();
@@ -20,43 +20,99 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
-// yt-dlp binary detection — Render (Linux pip install), local Mac venv, or system PATH
-const RENDER_YTDLP = '/usr/local/bin/yt-dlp';   // pip install --target or pip3 install yt-dlp on Render
-const LINUX_YTDLP  = path.join(__dirname, 'yt-dlp-linux');
-const MAC_YTDLP    = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
-
-let YTDLP_PATH = 'yt-dlp';
-if (fs.existsSync(RENDER_YTDLP)) {
-  YTDLP_PATH = RENDER_YTDLP;
-} else if (fs.existsSync(LINUX_YTDLP)) {
-  YTDLP_PATH = LINUX_YTDLP;
-} else if (fs.existsSync(MAC_YTDLP)) {
-  YTDLP_PATH = MAC_YTDLP;
+// ── yt-dlp binary detection ────────────────────────────────────────────────
+// Priority: project venv > pip user install > pip global > system PATH
+function findYtdlp() {
+  const candidates = [
+    path.join(__dirname, 'venv', 'bin', 'yt-dlp'),           // local venv (dev)
+    path.join(os.homedir(), '.local', 'bin', 'yt-dlp'),      // pip install --user (Render)
+    '/usr/local/bin/yt-dlp',                                  // pip global
+    '/usr/bin/yt-dlp',                                        // system package
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  // Last resort: try to find via `which`
+  try {
+    const which = execSync('which yt-dlp 2>/dev/null').toString().trim();
+    if (which) return which;
+  } catch (_) {}
+  return 'yt-dlp'; // hope it's on PATH
 }
 
+const YTDLP_PATH = findYtdlp();
 console.log('Using yt-dlp at:', YTDLP_PATH);
 
-// Render uses /usr/bin/ffmpeg; macOS Homebrew uses /opt/homebrew/bin
-const isRender = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
-const FFMPEG_LOCATION = isRender ? '/usr/bin' : '/opt/homebrew/bin';
+// ── ffmpeg detection ───────────────────────────────────────────────────────
+function findFfmpegDir() {
+  const dirs = [
+    '/usr/bin',              // Linux / Render
+    '/usr/local/bin',        // some Linux installs
+    '/opt/homebrew/bin',     // macOS Apple Silicon
+    '/usr/local/opt/ffmpeg/bin', // macOS Intel Homebrew
+  ];
+  for (const d of dirs) {
+    if (fs.existsSync(path.join(d, 'ffmpeg'))) return d;
+  }
+  return '/usr/bin'; // fallback
+}
+
+const FFMPEG_LOCATION = findFfmpegDir();
+console.log('Using ffmpeg from:', FFMPEG_LOCATION);
 
 const CUSTOM_ENV = {
   ...process.env,
-  PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
+  PATH: `${FFMPEG_LOCATION}:/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
 };
 
 const activeDownloads = new Map();
 const readyDownloads = new Map();
 
+// ── WebSocket ping/pong to keep connections alive on Render ────────────────
+const WS_PING_INTERVAL = 25000; // 25 seconds
+setInterval(() => {
+  wss.clients.forEach(client => {
+    if (client.isAlive === false) {
+      return client.terminate();
+    }
+    client.isAlive = false;
+    client.ping();
+  });
+}, WS_PING_INTERVAL);
+
+wss.on('connection', ws => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.send(JSON.stringify({ event: 'connected' }));
+});
+
 function broadcast(data) {
   const msg = JSON.stringify(data);
   wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
+      try { client.send(msg); } catch (_) {}
     }
   });
 }
 
+// ── Temp directory cleanup (remove files older than 30 min) ────────────────
+setInterval(() => {
+  try {
+    const files = fs.readdirSync(TEMP_DIR);
+    const now = Date.now();
+    for (const f of files) {
+      const fp = path.join(TEMP_DIR, f);
+      try {
+        const stat = fs.statSync(fp);
+        if (now - stat.mtimeMs > 30 * 60 * 1000) {
+          fs.unlinkSync(fp);
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+}, 10 * 60 * 1000); // every 10 min
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 function formatDuration(sec) {
   if (!sec || isNaN(sec)) return '00:00';
   const s = Math.floor(sec);
@@ -75,7 +131,9 @@ function getYouTubeVideoId(url) {
   return (match && match[2].length === 11) ? match[2] : null;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
 // API 1: Fetch Video Info
+// ════════════════════════════════════════════════════════════════════════════
 app.get('/api/info', async (req, res) => {
   const videoUrl = req.query.url;
   if (!videoUrl) {
@@ -84,7 +142,14 @@ app.get('/api/info', async (req, res) => {
 
   const videoId = getYouTubeVideoId(videoUrl);
   const args = ['--dump-json', '--no-warnings', '--no-check-certificates', videoUrl];
-  const proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+  
+  let proc;
+  try {
+    proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV, timeout: 30000 });
+  } catch (err) {
+    console.error('yt-dlp spawn failed:', err.message);
+    return fallbackOembed(videoId, res);
+  }
 
   let stdout = '';
   let stderr = '';
@@ -120,7 +185,7 @@ app.get('/api/info', async (req, res) => {
         return fallbackOembed(videoId, res);
       }
     } else {
-      console.error('yt-dlp info failed, code:', code, stderr.slice(0, 300));
+      console.error('yt-dlp info failed, code:', code, stderr.slice(0, 500));
       return fallbackOembed(videoId, res);
     }
   });
@@ -156,7 +221,9 @@ async function fallbackOembed(videoId, res) {
   return res.status(500).json({ error: 'Video bilgileri alınamadı. Geçersiz veya gizli YouTube adresi olabilir.' });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
 // API 2: Start Download
+// ════════════════════════════════════════════════════════════════════════════
 app.post('/api/download', (req, res) => {
   const { url, formatType, quality } = req.body;
   if (!url) return res.status(400).json({ error: 'URL gerekli.' });
@@ -178,10 +245,12 @@ app.post('/api/download', (req, res) => {
   activeDownloads.set(downloadId, state);
   res.json({ success: true, downloadId });
 
+  // Use --restrict-filenames to avoid Unicode issues on Linux (Render)
   const outputTemplate = path.join(TEMP_DIR, `${downloadId}_%(title)s.%(ext)s`);
   const args = [
     '--newline', '--progress',
     '--no-warnings', '--no-check-certificates',
+    '--restrict-filenames',
     '--ffmpeg-location', FFMPEG_LOCATION,
     '-o', outputTemplate
   ];
@@ -191,123 +260,275 @@ app.post('/api/download', (req, res) => {
   } else {
     const maxH = quality && quality !== 'best' ? quality.replace('p', '') : '1080';
     args.push(
-      '-f', `bestvideo[height<=${maxH}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${maxH}]+bestaudio/best`,
+      '-f', `bestvideo[height<=${maxH}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${maxH}]+bestaudio/best[height<=${maxH}]/best`,
       '--merge-output-format', 'mp4'
     );
   }
   args.push(url);
 
-  console.log('Starting download:', downloadId, 'format:', formatType, 'quality:', quality);
+  console.log(`[${downloadId}] Starting download — format: ${formatType}, quality: ${quality}`);
+  console.log(`[${downloadId}] Command: ${YTDLP_PATH} ${args.join(' ')}`);
 
-  const proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+  let proc;
+  try {
+    proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+  } catch (err) {
+    console.error(`[${downloadId}] yt-dlp spawn error:`, err.message);
+    activeDownloads.delete(downloadId);
+    broadcast({ event: 'error', downloadId, error: 'yt-dlp çalıştırılamadı. Sunucu yapılandırma hatası.' });
+    return;
+  }
+
   state.proc = proc;
   let stderrBuf = '';
+  let lastFilePath = '';
 
+  // ── stdout parsing ─────────────────────────────────────────────────────
   proc.stdout.on('data', chunk => {
-    chunk.toString().split('\n').forEach(line => {
+    const text = chunk.toString();
+    const lines = text.split('\n');
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
       // Progress: [download]  45.3% of  50.00MiB at   2.13MiB/s ETA 00:18
-      const pm = line.match(/\[download\]\s+([\d.]+)%\s+of\s+([\d.~\s\w]+)\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/);
+      const pm = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\s*\w+)\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/);
       if (pm) {
-        state.percent = parseFloat(pm[1]);
+        const pct = parseFloat(pm[1]);
+        state.percent = pct;
         state.totalSize = pm[2].trim();
         state.speed = pm[3].trim();
         state.eta = pm[4].trim();
         state.status = 'downloading';
-        broadcast({ event: 'progress', downloadId, percent: state.percent, totalSize: state.totalSize, speed: state.speed, eta: state.eta });
-        return;
+        broadcast({
+          event: 'progress', downloadId,
+          percent: state.percent,
+          totalSize: state.totalSize,
+          speed: state.speed,
+          eta: state.eta
+        });
+        continue;
       }
 
+      // Also catch: [download] 100% of 50.00MiB (no ETA/speed when done)
+      const pm100 = line.match(/\[download\]\s+100%\s+of\s+([\d.]+\s*\w+)/);
+      if (pm100) {
+        state.percent = 100;
+        state.totalSize = pm100[1].trim();
+        state.status = 'downloading';
+        broadcast({ event: 'progress', downloadId, percent: 100, totalSize: state.totalSize, speed: '—', eta: '00:00' });
+        continue;
+      }
+
+      // "Already downloaded" — happens when file exists
+      if (line.includes('has already been downloaded')) {
+        state.percent = 100;
+        state.status = 'downloading';
+        continue;
+      }
+
+      // Destination (both video & audio streams)
       const destM = line.match(/\[download\]\s+Destination:\s+(.+)/);
       if (destM) {
-        state.filePath = destM[1].trim();
-        state.filename = path.basename(state.filePath).replace(`${downloadId}_`, '');
+        lastFilePath = destM[1].trim();
+        state.filePath = lastFilePath;
+        state.filename = path.basename(lastFilePath).replace(new RegExp(`^${downloadId}_`), '');
+        continue;
       }
 
+      // Merger output
       const mergeM = line.match(/\[Merger\]\s+Merging formats into\s+"(.+)"/);
       if (mergeM) {
         state.filePath = mergeM[1].trim();
-        state.filename = path.basename(state.filePath).replace(`${downloadId}_`, '');
+        state.filename = path.basename(state.filePath).replace(new RegExp(`^${downloadId}_`), '');
+        state.status = 'converting';
         broadcast({ event: 'status_update', downloadId, message: 'Video birleştiriliyor...' });
+        continue;
       }
 
+      // ExtractAudio
       const audioM = line.match(/\[ExtractAudio\]\s+Destination:\s+(.+)/);
       if (audioM) {
         state.filePath = audioM[1].trim();
-        state.filename = path.basename(state.filePath).replace(`${downloadId}_`, '');
+        state.filename = path.basename(state.filePath).replace(new RegExp(`^${downloadId}_`), '');
         state.status = 'converting';
         broadcast({ event: 'status_update', downloadId, message: 'MP3 dönüştürülüyor...' });
+        continue;
       }
-    });
+
+      // FixupM4a / FixupDuration / MoveFiles — final file path
+      const fixupM = line.match(/\[(?:FixupM4a|FixupDuration|MoveFiles)\].*?(?:Destination|to)\s*:?\s+"?([^"]+)"?/);
+      if (fixupM) {
+        const p = fixupM[1].trim();
+        if (fs.existsSync(p)) {
+          state.filePath = p;
+          state.filename = path.basename(p).replace(new RegExp(`^${downloadId}_`), '');
+        }
+        continue;
+      }
+    }
   });
 
   proc.stderr.on('data', d => { stderrBuf += d.toString(); });
 
   proc.on('error', err => {
-    console.error('yt-dlp spawn error:', err.message);
+    console.error(`[${downloadId}] yt-dlp spawn error:`, err.message);
     activeDownloads.delete(downloadId);
     broadcast({ event: 'error', downloadId, error: 'yt-dlp çalıştırılamadı.' });
   });
 
   proc.on('close', code => {
     activeDownloads.delete(downloadId);
+
+    console.log(`[${downloadId}] yt-dlp exited with code ${code}`);
+    if (stderrBuf.trim()) {
+      console.log(`[${downloadId}] stderr: ${stderrBuf.slice(0, 800)}`);
+    }
+
     if (code === 0) {
-      if (!state.filePath || !fs.existsSync(state.filePath)) {
-        const files = fs.readdirSync(TEMP_DIR).filter(f => f.startsWith(downloadId));
-        if (files.length > 0) {
-          const sorted = files.sort((a, b) => {
-            const pref = ['.mp4', '.mp3', '.m4a', '.webm', '.mkv'];
-            return pref.indexOf(path.extname(b)) - pref.indexOf(path.extname(a));
-          });
-          state.filePath = path.join(TEMP_DIR, sorted[0]);
-          state.filename = sorted[0].replace(`${downloadId}_`, '');
-        }
+      // Try to find the final file
+      let finalPath = state.filePath;
+
+      // If file path is set but file doesn't exist, search temp dir
+      if (!finalPath || !fs.existsSync(finalPath)) {
+        finalPath = findDownloadedFile(downloadId, fileExt);
       }
 
-      if (!state.filePath || !fs.existsSync(state.filePath)) {
-        console.error('File not found! stderr:', stderrBuf.slice(0, 500));
-        broadcast({ event: 'error', downloadId, error: 'İndirme tamamlandı ama dosya bulunamadı.' });
+      if (!finalPath || !fs.existsSync(finalPath)) {
+        console.error(`[${downloadId}] File not found after successful download!`);
+        console.error(`[${downloadId}] state.filePath was: ${state.filePath}`);
+        console.error(`[${downloadId}] TEMP_DIR contents:`, fs.readdirSync(TEMP_DIR).filter(f => f.startsWith(downloadId)));
+        broadcast({ event: 'error', downloadId, error: 'İndirme tamamlandı ama dosya bulunamadı. Lütfen tekrar deneyin.' });
         return;
       }
 
-      readyDownloads.set(downloadId, { filePath: state.filePath, filename: state.filename || `download.${fileExt}` });
-      broadcast({ event: 'complete', downloadId, filename: state.filename, percent: 100, downloadUrl: `/api/download-file/${downloadId}` });
+      state.filePath = finalPath;
+      state.filename = path.basename(finalPath).replace(new RegExp(`^${downloadId}_`), '');
+
+      readyDownloads.set(downloadId, {
+        filePath: state.filePath,
+        filename: state.filename || `download.${fileExt}`
+      });
+
+      console.log(`[${downloadId}] Download complete: ${state.filename}`);
+      broadcast({
+        event: 'complete', downloadId,
+        filename: state.filename,
+        percent: 100,
+        downloadUrl: `/api/download-file/${downloadId}`
+      });
     } else {
-      console.error('yt-dlp failed code:', code, '\nstderr:', stderrBuf.slice(0, 500));
-      broadcast({ event: 'error', downloadId, error: 'İndirme tamamlanamadı. Lütfen tekrar deneyin.' });
+      // yt-dlp failed
+      let userError = 'İndirme tamamlanamadı. Lütfen tekrar deneyin.';
+      
+      // Provide more specific error messages
+      if (stderrBuf.includes('Sign in to confirm')) {
+        userError = 'Bu video yaş doğrulaması gerektiriyor. İndirilemez.';
+      } else if (stderrBuf.includes('Private video') || stderrBuf.includes('Video unavailable')) {
+        userError = 'Bu video gizli veya kullanılamıyor.';
+      } else if (stderrBuf.includes('copyright')) {
+        userError = 'Bu video telif hakkı nedeniyle indirilemez.';
+      } else if (stderrBuf.includes('ffmpeg') || stderrBuf.includes('FFmpeg')) {
+        userError = 'Video birleştirme hatası (ffmpeg). Farklı bir çözünürlük deneyin.';
+      } else if (stderrBuf.includes('HTTP Error 429') || stderrBuf.includes('Too Many Requests')) {
+        userError = 'Çok fazla istek gönderildi. Lütfen biraz bekleyip tekrar deneyin.';
+      }
+
+      console.error(`[${downloadId}] Download failed with code ${code}`);
+      broadcast({ event: 'error', downloadId, error: userError });
     }
   });
 });
 
+/**
+ * Search TEMP_DIR for files belonging to this download.
+ * Prefers the final merged/extracted file over intermediate .f399 chunks.
+ */
+function findDownloadedFile(downloadId, preferredExt) {
+  try {
+    const allFiles = fs.readdirSync(TEMP_DIR).filter(f => f.startsWith(downloadId));
+    if (allFiles.length === 0) return null;
+
+    // Separate final files from intermediate .f### files  
+    const finalFiles = allFiles.filter(f => !f.match(/\.f\d+\./));
+    const candidates = finalFiles.length > 0 ? finalFiles : allFiles;
+
+    // Sort by preferred extension
+    const extPriority = [`.${preferredExt}`, '.mp4', '.mp3', '.m4a', '.webm', '.mkv', '.opus'];
+    candidates.sort((a, b) => {
+      const extA = path.extname(a).toLowerCase();
+      const extB = path.extname(b).toLowerCase();
+      const idxA = extPriority.indexOf(extA);
+      const idxB = extPriority.indexOf(extB);
+      return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    });
+
+    const chosen = path.join(TEMP_DIR, candidates[0]);
+    if (fs.existsSync(chosen)) return chosen;
+  } catch (e) {
+    console.error('findDownloadedFile error:', e.message);
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // API 3: Status (polling fallback)
+// ════════════════════════════════════════════════════════════════════════════
 app.get('/api/status/:id', (req, res) => {
   const { id } = req.params;
   const active = activeDownloads.get(id);
   if (active) {
-    return res.json({ event: 'progress', downloadId: id, percent: active.percent, totalSize: active.totalSize, speed: active.speed, eta: active.eta, status: active.status });
+    return res.json({
+      event: 'progress', downloadId: id,
+      percent: active.percent,
+      totalSize: active.totalSize,
+      speed: active.speed,
+      eta: active.eta,
+      status: active.status
+    });
   }
   const ready = readyDownloads.get(id);
   if (ready) {
-    return res.json({ event: 'complete', downloadId: id, filename: ready.filename, percent: 100, downloadUrl: `/api/download-file/${id}` });
+    return res.json({
+      event: 'complete', downloadId: id,
+      filename: ready.filename,
+      percent: 100,
+      downloadUrl: `/api/download-file/${id}`
+    });
   }
   res.status(404).json({ error: 'İndirme bulunamadı' });
 });
 
+// ════════════════════════════════════════════════════════════════════════════
 // API 4: Serve file
+// ════════════════════════════════════════════════════════════════════════════
 app.get('/api/download-file/:id', (req, res) => {
   const item = readyDownloads.get(req.params.id);
   if (!item || !fs.existsSync(item.filePath)) {
     return res.status(404).send('Dosya bulunamadı veya süresi doldu.');
   }
+
+  const stat = fs.statSync(item.filePath);
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(item.filename)}"`);
+
   res.download(item.filePath, item.filename, err => {
-    if (err) console.error('File send error:', err.message);
-    try {
-      if (fs.existsSync(item.filePath)) fs.unlinkSync(item.filePath);
-      readyDownloads.delete(req.params.id);
-    } catch (e) { console.error('Cleanup error:', e.message); }
+    if (err && !res.headersSent) {
+      console.error('File send error:', err.message);
+    }
+    // Cleanup after 5 seconds to let the download finish
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(item.filePath)) fs.unlinkSync(item.filePath);
+        readyDownloads.delete(req.params.id);
+      } catch (e) { console.error('Cleanup error:', e.message); }
+    }, 5000);
   });
 });
 
+// ════════════════════════════════════════════════════════════════════════════
 // API 5: Cancel
+// ════════════════════════════════════════════════════════════════════════════
 app.post('/api/cancel', (req, res) => {
   const { downloadId } = req.body;
   const item = activeDownloads.get(downloadId);
@@ -320,11 +541,22 @@ app.post('/api/cancel', (req, res) => {
   res.status(404).json({ error: 'Aktif indirme bulunamadı' });
 });
 
-wss.on('connection', ws => {
-  ws.send(JSON.stringify({ event: 'connected' }));
+// ════════════════════════════════════════════════════════════════════════════
+// Health check endpoint for Render
+// ════════════════════════════════════════════════════════════════════════════
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    ytdlp: YTDLP_PATH,
+    ffmpeg: FFMPEG_LOCATION,
+    activeDownloads: activeDownloads.size,
+    readyDownloads: readyDownloads.size
+  });
 });
 
 const PORT = process.env.PORT || 3820;
 server.listen(PORT, () => {
-  console.log(`YouTube Downloader çalışıyor: http://localhost:${PORT}`);
+  console.log(`YouTube Downloader running on port ${PORT}`);
+  console.log(`yt-dlp: ${YTDLP_PATH}`);
+  console.log(`ffmpeg: ${FFMPEG_LOCATION}`);
 });

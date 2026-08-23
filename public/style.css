@@ -459,10 +459,13 @@ body {
 .select-icon {
   position: absolute;
   left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--text-secondary);
-  font-size: 0.82rem;
   pointer-events: none;
   z-index: 1;
+  display: flex;
+  align-items: center;
 }
 
 .select-wrapper select {
@@ -553,7 +556,7 @@ body {
   color: #fff;
 }
 
-.card-title i { color: var(--accent-blue); }
+.card-title svg { color: var(--accent-blue); stroke: var(--accent-blue); flex-shrink: 0; }
 
 .status-counter {
   background: rgba(255, 255, 255, 0.07);
@@ -745,6 +748,26 @@ body {
   align-items: center;
   gap: 0.25rem;
   white-space: nowrap;
+}
+
+.completed-filename {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-message-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #ff6b6b;
+  font-size: 0.8rem;
 }
 
 /* Save device button */

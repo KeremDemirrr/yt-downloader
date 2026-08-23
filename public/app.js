@@ -22,17 +22,28 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentVideoInfo = null;
   let selectedFormat   = 'video';
 
-  // downloadId -> { card, pollTimer }
+  // downloadId -> { card, pollTimer, format }
   const downloadsMap = new Map();
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
   let ws = null;
+  let wsReconnectDelay = 1000;
+  const WS_MAX_DELAY = 15000;
 
   function connectWs() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${window.location.host}`);
+    try {
+      ws = new WebSocket(`${protocol}//${window.location.host}`);
+    } catch (e) {
+      console.error('[WS] Creation failed:', e);
+      scheduleReconnect();
+      return;
+    }
 
-    ws.onopen = () => console.log('[WS] Connected');
+    ws.onopen = () => {
+      console.log('[WS] Connected');
+      wsReconnectDelay = 1000; // reset delay on success
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -43,13 +54,20 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     ws.onclose = () => {
-      console.log('[WS] Closed — reconnecting in 3s');
-      setTimeout(connectWs, 3000);
+      console.log('[WS] Closed');
+      scheduleReconnect();
     };
 
-    ws.onerror = (e) => {
-      console.error('[WS] Error:', e);
+    ws.onerror = () => {
+      // onclose will fire after this
     };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(() => {
+      connectWs();
+      wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, WS_MAX_DELAY);
+    }, wsReconnectDelay);
   }
 
   connectWs();
@@ -198,7 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const { downloadId } = data;
       const title = currentVideoInfo ? currentVideoInfo.title : 'YouTube Medya';
 
-      // Create the single download card
+      // Create the download card
       createCard(downloadId, title, selectedFormat);
 
       // Start HTTP polling as backup (WS is primary)
@@ -230,7 +248,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="download-item-actions">
           <span class="pill-badge preparing">Hazırlanıyor</span>
           <button class="cancel-download-btn" data-id="${downloadId}" title="İptal Et">
-            <i class="ri-close-line"></i> İptal
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            İptal
           </button>
         </div>
       </div>
@@ -238,7 +257,10 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="progress-fill" style="width: 0%"></div>
       </div>
       <div class="download-meta-row">
-        <span class="speed-text"><i class="ri-pulse-line"></i> —</span>
+        <span class="speed-text">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
+          —
+        </span>
         <span class="size-text">%0 / —</span>
         <span class="eta-text">Kalan: —</span>
       </div>
@@ -260,7 +282,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!entry) return;
 
     const timer = setInterval(async () => {
-      // Stop polling if card is gone
       if (!downloadsMap.has(downloadId)) { clearInterval(timer); return; }
 
       try {
@@ -272,8 +293,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.event === 'complete' || data.event === 'error') {
           clearInterval(timer);
         }
-      } catch (e) { /* ignore */ }
-    }, 1500);
+      } catch (e) { /* network error — keep polling */ }
+    }, 2000);
 
     entry.pollTimer = timer;
   }
@@ -292,7 +313,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (fill)  fill.style.width = `${data.percent}%`;
     if (badge) { badge.className = 'pill-badge downloading'; badge.textContent = 'İndiriliyor'; }
-    if (speed) speed.innerHTML = `<i class="ri-pulse-line"></i> ${data.speed || '—'}`;
+    if (speed) {
+      speed.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
+        ${data.speed || '—'}
+      `;
+    }
     if (size)  size.textContent = `%${parseFloat(data.percent || 0).toFixed(1)} / ${data.totalSize || '—'}`;
     if (eta)   eta.textContent  = `Kalan: ${data.eta || '—'}`;
   }
@@ -322,11 +348,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cancelBtn) cancelBtn.remove();
 
     const ext = entry.format === 'mp3' ? 'mp3' : 'mp4';
+    const displayName = data.filename || ('download.' + ext);
+
     if (meta) {
       meta.innerHTML = `
-        <span><i class="ri-check-double-line"></i> ${escapeHtml(data.filename || ('download.' + ext))}</span>
-        <a href="${data.downloadUrl}" class="save-device-btn" download="${escapeHtml(data.filename || ('download.' + ext))}">
-          <i class="ri-download-2-line"></i> Cihazına Kaydet (${ext.toUpperCase()})
+        <span class="completed-filename">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#30d158" stroke-width="2.5" stroke-linecap="round"><polyline points="20,6 9,17 4,12"/></svg>
+          ${escapeHtml(displayName)}
+        </span>
+        <a href="${data.downloadUrl}" class="save-device-btn" download="${escapeHtml(displayName)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21,15v4a2,2,0,0,1-2,2H5a2,2,0,0,1-2-2V15"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Cihazına Kaydet (${ext.toUpperCase()})
         </a>
       `;
     }
@@ -347,7 +379,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (badge)     { badge.className = 'pill-badge failed'; badge.textContent = 'Hata'; }
     if (cancelBtn) cancelBtn.remove();
     if (meta) {
-      meta.innerHTML = `<span style="color: var(--error-color, #ff6b6b)"><i class="ri-error-warning-line"></i> ${escapeHtml(data.error || 'İndirme hatası')}</span>`;
+      meta.innerHTML = `
+        <span class="error-message-text">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff6b6b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          ${escapeHtml(data.error || 'İndirme hatası')}
+        </span>
+      `;
     }
 
     downloadsMap.delete(data.downloadId);
@@ -389,14 +426,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function setFetchLoading(on) {
+    const icon = fetchBtn.querySelector('svg, i');
     if (on) {
       fetchBtn.disabled = true;
       fetchBtnText.textContent = 'Yükleniyor...';
-      fetchBtn.querySelector('i').className = 'ri-loader-4-line spin-icon';
+      if (icon) icon.classList.add('spin-icon');
     } else {
       fetchBtn.disabled = false;
       fetchBtnText.textContent = 'Hazırla';
-      fetchBtn.querySelector('i').className = 'ri-arrow-right-s-line';
+      if (icon) icon.classList.remove('spin-icon');
     }
   }
 
