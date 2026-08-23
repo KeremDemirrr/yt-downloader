@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "build": "pip install --user yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || pip3 install yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || true",
     "postinstall": "pip install --user yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || pip3 install yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || true"
   },
   "engines": {
