@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "postinstall": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod 755 ./yt-dlp || true",
-    "build": "npm run postinstall"
+    "postinstall": "pip install --user yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || pip3 install yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || true"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -16,7 +15,6 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "ffmpeg-static": "^5.2.0",
-    "ws": "^8.18.0",
-    "youtubei.js": "^18.0.0"
+    "ws": "^8.18.0"
   }
 }

@@ -38,49 +38,51 @@ function findFfmpeg() {
 const FFMPEG_PATH = findFfmpeg();
 console.log('Using ffmpeg at:', FFMPEG_PATH);
 
-// ── yt-dlp binary detection & auto-download ────────────────────────────────
-function ensureYtdlp() {
+// ── yt-dlp execution command resolution ────────────────────────────────────
+// Returns [command, prefixArgs] e.g. ['python3', ['-m', 'yt_dlp']] or ['/path/to/yt-dlp', []]
+function getYtdlpCommand() {
+  // Check local development venv
+  const venvBin = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
+  if (fs.existsSync(venvBin)) return { cmd: venvBin, prefix: [] };
+
+  // Check pip user install
+  const userPipBin = path.join(os.homedir(), '.local', 'bin', 'yt-dlp');
+  if (fs.existsSync(userPipBin)) return { cmd: userPipBin, prefix: [] };
+
+  // System binaries
+  for (const sys of ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp']) {
+    if (fs.existsSync(sys)) return { cmd: sys, prefix: [] };
+  }
+
+  // Try python3 -m yt_dlp (loads all pip installed plugins like GetPOT)
+  try {
+    execSync('python3 -m yt_dlp --version 2>/dev/null');
+    return { cmd: 'python3', prefix: ['-m', 'yt_dlp'] };
+  } catch (_) {}
+
+  // Fallback to standalone binary
   const binaryPath = path.join(__dirname, 'yt-dlp');
   if (fs.existsSync(binaryPath)) {
     try { fs.chmodSync(binaryPath, 0o755); } catch (_) {}
-    return binaryPath;
+    return { cmd: binaryPath, prefix: [] };
   }
 
-  const venvPath = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
-  if (fs.existsSync(venvPath)) return venvPath;
-
-  const userPip = path.join(os.homedir(), '.local', 'bin', 'yt-dlp');
-  if (fs.existsSync(userPip)) return userPip;
-
-  for (const sys of ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp']) {
-    if (fs.existsSync(sys)) return sys;
-  }
-
-  try {
-    console.log('Auto-downloading standalone yt-dlp binary...');
-    execSync(`curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${binaryPath}" && chmod 755 "${binaryPath}"`);
-    if (fs.existsSync(binaryPath)) return binaryPath;
-  } catch (e) {
-    console.error('Auto-download yt-dlp failed:', e.message);
-  }
-
-  return 'yt-dlp';
+  return { cmd: 'yt-dlp', prefix: [] };
 }
 
-const YTDLP_PATH = ensureYtdlp();
-console.log('Using yt-dlp at:', YTDLP_PATH);
+const YTDLP_RUNNER = getYtdlpCommand();
+console.log('Using yt-dlp runner:', YTDLP_RUNNER.cmd, YTDLP_RUNNER.prefix.join(' '));
 
 const CUSTOM_ENV = {
   ...process.env,
-  PATH: `${path.dirname(FFMPEG_PATH)}:/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
+  PATH: `${path.dirname(FFMPEG_PATH)}:${os.homedir()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
 };
 
-// Common arguments: Android client bypasses cloud/datacenter IP blocks with zero cookies required
+// Common yt-dlp arguments (POT plugin handles proof-of-origin tokens dynamically)
 const COMMON_YTDLP_ARGS = [
   '--force-ipv4',
   '--no-warnings',
   '--no-check-certificates',
-  '--extractor-args', 'youtube:player_client=android',
   '--ffmpeg-location', FFMPEG_PATH
 ];
 
@@ -159,6 +161,7 @@ app.get('/api/info', async (req, res) => {
 
   const videoId = getYouTubeVideoId(videoUrl);
   const args = [
+    ...YTDLP_RUNNER.prefix,
     '--dump-json',
     ...COMMON_YTDLP_ARGS,
     videoUrl
@@ -166,7 +169,7 @@ app.get('/api/info', async (req, res) => {
   
   let proc;
   try {
-    proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV, timeout: 30000 });
+    proc = spawn(YTDLP_RUNNER.cmd, args, { env: CUSTOM_ENV, timeout: 30000 });
   } catch (err) {
     console.error('yt-dlp spawn failed:', err.message);
     return fallbackOembed(videoId, res);
@@ -268,6 +271,7 @@ app.post('/api/download', (req, res) => {
 
   const outputTemplate = path.join(TEMP_DIR, `${downloadId}_%(title)s.%(ext)s`);
   const args = [
+    ...YTDLP_RUNNER.prefix,
     '--newline', '--progress',
     ...COMMON_YTDLP_ARGS,
     '--restrict-filenames',
@@ -279,18 +283,18 @@ app.post('/api/download', (req, res) => {
   } else {
     const maxH = quality && quality !== 'best' ? quality.replace('p', '') : '1080';
     args.push(
-      '-f', `bv*[height<=${maxH}][ext=mp4]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}]/best`,
+      '-f', `bv*[height<=${maxH}]+ba/b[height<=${maxH}]/bv*+ba/best`,
       '--merge-output-format', 'mp4'
     );
   }
   args.push(url);
 
   console.log(`[${downloadId}] Starting download: ${formatType} (${quality || 'best'})`);
-  console.log(`[${downloadId}] Command: ${YTDLP_PATH} ${args.join(' ')}`);
+  console.log(`[${downloadId}] Command: ${YTDLP_RUNNER.cmd} ${args.join(' ')}`);
 
   let proc;
   try {
-    proc = spawn(YTDLP_PATH, args, { env: CUSTOM_ENV });
+    proc = spawn(YTDLP_RUNNER.cmd, args, { env: CUSTOM_ENV });
   } catch (err) {
     console.error(`[${downloadId}] spawn error:`, err.message);
     activeDownloads.delete(downloadId);
@@ -538,7 +542,7 @@ app.post('/api/cancel', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    ytdlp: YTDLP_PATH,
+    ytdlp: YTDLP_RUNNER.cmd,
     ffmpeg: FFMPEG_PATH,
     activeDownloads: activeDownloads.size,
     readyDownloads: readyDownloads.size
@@ -548,6 +552,6 @@ app.get('/api/health', (req, res) => {
 const PORT = process.env.PORT || 3820;
 server.listen(PORT, () => {
   console.log(`YouTube Downloader running on port ${PORT}`);
-  console.log(`yt-dlp: ${YTDLP_PATH}`);
+  console.log(`yt-dlp: ${YTDLP_RUNNER.cmd}`);
   console.log(`ffmpeg: ${FFMPEG_PATH}`);
 });
