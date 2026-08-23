@@ -2,7 +2,7 @@ services:
   - type: web
     name: yt-downloader
     runtime: node
-    buildCommand: npm install && (pip install --user yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || pip3 install yt-dlp yt-dlp-get-pot bgutil-ytdlp-pot-provider || true)
+    buildCommand: npm install && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod 755 ./yt-dlp
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
