@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "build": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod a+rx ./yt-dlp || pip install -U yt-dlp --user || true"
+    "postinstall": "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod 755 ./yt-dlp || true",
+    "build": "npm run postinstall"
   },
   "engines": {
     "node": ">=18.0.0"

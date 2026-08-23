@@ -43,26 +43,40 @@ function findFfmpeg() {
 const FFMPEG_PATH = findFfmpeg();
 console.log('Using ffmpeg at:', FFMPEG_PATH);
 
-// ── yt-dlp binary detection ────────────────────────────────────────────────
-function findYtdlp() {
-  const candidates = [
-    path.join(__dirname, 'yt-dlp'),                          // standalone binary downloaded in build
-    path.join(__dirname, 'venv', 'bin', 'yt-dlp'),           // local venv
-    path.join(os.homedir(), '.local', 'bin', 'yt-dlp'),      // pip install --user (Render)
-    '/usr/local/bin/yt-dlp',                                  // pip global
-    '/usr/bin/yt-dlp',                                        // system package
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+// ── yt-dlp binary detection & auto-download on Render/Linux ─────────────────
+function ensureYtdlp() {
+  const binaryPath = path.join(__dirname, 'yt-dlp');
+  if (fs.existsSync(binaryPath)) {
+    try { fs.chmodSync(binaryPath, 0o755); } catch (_) {}
+    return binaryPath;
   }
+
+  // Local development venv
+  const venvPath = path.join(__dirname, 'venv', 'bin', 'yt-dlp');
+  if (fs.existsSync(venvPath)) return venvPath;
+
+  // Pip user install
+  const userPip = path.join(os.homedir(), '.local', 'bin', 'yt-dlp');
+  if (fs.existsSync(userPip)) return userPip;
+
+  // System binaries
+  for (const sys of ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp']) {
+    if (fs.existsSync(sys)) return sys;
+  }
+
+  // If on Linux / Render and not found, auto-download standalone binary
   try {
-    const which = execSync('which yt-dlp 2>/dev/null').toString().trim();
-    if (which) return which;
-  } catch (_) {}
+    console.log('Auto-downloading standalone yt-dlp binary...');
+    execSync(`curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${binaryPath}" && chmod 755 "${binaryPath}"`);
+    if (fs.existsSync(binaryPath)) return binaryPath;
+  } catch (e) {
+    console.error('Auto-download yt-dlp failed:', e.message);
+  }
+
   return 'yt-dlp';
 }
 
-const YTDLP_PATH = findYtdlp();
+const YTDLP_PATH = ensureYtdlp();
 console.log('Using yt-dlp at:', YTDLP_PATH);
 
 const CUSTOM_ENV = {
@@ -70,8 +84,9 @@ const CUSTOM_ENV = {
   PATH: `${path.dirname(FFMPEG_PATH)}:/opt/homebrew/bin:/usr/local/bin:${os.homedir()}/.local/bin:/usr/bin:/bin:${process.env.PATH || ''}`
 };
 
-// Common yt-dlp args
+// Common yt-dlp arguments with JS runtime solver (Node.js)
 const COMMON_YTDLP_ARGS = [
+  '--js-runtimes', 'node',
   '--force-ipv4',
   '--no-warnings',
   '--no-check-certificates',
@@ -289,7 +304,7 @@ app.post('/api/download', (req, res) => {
   } catch (err) {
     console.error(`[${downloadId}] spawn error:`, err.message);
     activeDownloads.delete(downloadId);
-    broadcast({ event: 'error', downloadId, error: 'İndirme başlatılamadı.' });
+    broadcast({ event: 'error', downloadId, error: 'İndirme işlemi başlatılamadı: ' + err.message });
     return;
   }
 
@@ -304,7 +319,7 @@ app.post('/api/download', (req, res) => {
     for (const line of lines) {
       if (!line.trim()) continue;
 
-      // Progress match
+      // Progress match: [download]  45.3% of  50.00MiB at   2.13MiB/s ETA 00:18
       const pm = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\s*\w+)\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/);
       if (pm) {
         state.percent = parseFloat(pm[1]);
@@ -374,7 +389,7 @@ app.post('/api/download', (req, res) => {
   proc.on('error', err => {
     console.error(`[${downloadId}] spawn error:`, err.message);
     activeDownloads.delete(downloadId);
-    broadcast({ event: 'error', downloadId, error: 'İndirme işlemi başlatılamadı.' });
+    broadcast({ event: 'error', downloadId, error: 'İndirme işlemi başlatılamadı: ' + err.message });
   });
 
   proc.on('close', code => {
@@ -421,6 +436,8 @@ app.post('/api/download', (req, res) => {
         userError = 'Bu video gizli veya kullanılamıyor.';
       } else if (stderrBuf.includes('HTTP Error 429')) {
         userError = 'Sunucu yoğunluğu. Lütfen birkaç saniye sonra tekrar deneyin.';
+      } else if (stderrBuf.includes('Permission denied')) {
+        userError = 'Sunucu dosya izni hatası. Yeniden deneniyor...';
       }
 
       broadcast({ event: 'error', downloadId, error: userError });
